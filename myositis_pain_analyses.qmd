@@ -70,13 +70,6 @@ library(googlesheets4)
 library(lubridate)   # floor_date() is used later
 library(knitr)
 
-# ---- Data input ----
-# For cleaning steps see:
-# /Users/peterkerkhof/surfdrive/R/reddit/reddit-projects/myositis/myositis-dystrophy-cleaning
-#
-# Expected columns used in this file (at minimum):
-# - doc_id, text, author, subreddit, year, created_utc
-# - lemmatized_text (used in the "body regions" chunk)
 df <- arrow::read_feather(here("LLM output", "majority_vote_gpt51_20251210_181138.feather"))
 ```
 
@@ -265,8 +258,6 @@ tokens_normalized <- tokens_normalized |>
 rm(model)
 ```
 
-
-
 ```{r}
 #| label: pain-mentions (unigrams only)
 #| message: false
@@ -390,8 +381,6 @@ bigram_experience_counts <- pain_bigrams |>
   select(bigram, n) |>
   arrange(desc(n))
 ```
-
-
 
 ```{r}
 #| label: tables pain-terms and pain-descriptions
@@ -781,14 +770,15 @@ p2 <- ggraph(g, layout = "stress") +
     plot.caption = element_text(size = 9, color = "grey40", hjust = 0)
   )
 
-ggsave(
-  filename = "Myositis_Semantic_Network_HighRes.png",
-  plot = p2,
-  width = 12,       # Width in inches
-  height = 8,       # Height in inches
-  dpi = 300,        # High resolution for publication
-  bg = "white"      # Ensures transparent backgrounds don't turn black
-)
+p2 
+#ggsave(
+#  filename = "Myositis_Semantic_Network_HighRes.png",
+#  plot = p2,
+#  width = 12,       # Width in inches
+#  height = 8,       # Height in inches
+#  dpi = 300,        # High resolution for publication
+#  bg = "white"      # Ensures transparent backgrounds don't turn black
+#)
 
 cat("Nodes:", gorder(g), "\n")
 cat("Edges:", gsize(g), "\n")
@@ -830,8 +820,6 @@ kable(centrality_table,
 
 
 ```
-
-
 
 ```{r}
 # ---- Community detection + composition analysis  ----
