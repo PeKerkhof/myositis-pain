@@ -1,0 +1,569 @@
+---
+title: "Myositis"
+format:
+  html: default
+  pdf: default
+  docx: default
+editor: visual
+execute:
+  echo: false
+editor_options: 
+  chunk_output_type: inline
+always_allow_html: yes
+---
+
+## Reading the data
+
+```{r}
+#| message: false
+#| label: loading-libraries-and-data
+
+rm(list = ls()[!sapply(ls(), function(x) is.function(get(x)))])
+cat("\014")
+
+options(scipen = 999)
+
+# Loading required libraries
+library(tidyverse); library(lubridate);library(here)
+library(furrr); library(jsonlite);library(arrow)
+library(feather)
+library(udpipe)
+library(tidytext)
+library(stringi)
+library(arrow)
+
+# Loading Reddit parquet data
+
+df_start <- arrow::read_feather(here("data", "myositis_submissions_incl_subreddits_2005_july2025.feather")) 
+
+df <- df_start 
+
+```
+
+Before cleaning, the data contained `r scales::comma(nrow(df_start))` Reddit posts, posted by `r scales::comma(length(unique(df_start$author)))` authors, posted in `r scales::comma(length(unique(df_start$subreddit)))` subreddits. `r scales::comma( sum(df_start$category == "myositis"))` posts were related to Myositis, `r scales::comma( sum(df_start$category == "muscular dystrophy"))` were related to Muscular Dystrophy, and `r scales::comma(sum(df_start$category == "mixed"))` posts referred to both.
+
+Several steps were taken to clean the data. The following posts were removed:
+
+-   posts selected based on myopathy/ies as a keyword but not referring to inflammatory of necrotizing myopathy/ies
+-   duplicate posts (identical text fields (title and selftext) and posted within 14 days of each other by the same author)
+-   deleted selftext
+-   posts written by by accounts that are clearly bots
+-   non English posts
+-   posts containing 30 or more asterisks or 10 or more urls's
+-   posts with fewer than 10 words
+-   posts containing the word "product name"
+-   posts from subreddits that were about animals
+-   posts from subreddits or authors that were not about personal experiences or questions
+-   personal subreddits (u/)
+
+```{r}
+#| message: false
+#| label: select correct combinations of myopathy + myositis related words
+
+#library(stringr)
+#library(dplyr)
+#library(tidyr) # For unnest()
+
+# Word stems to allow variations
+myo_keywords <- c("necrotizing myopathy", "necrotizing myopathies", "necrotising myopathy", "necrotising myopathies", 
+  "inflammatory myopathy","inflammatory myopathies",
+  "myositis", "polymyositis", "dermatomyositis", "synthetase syndrome", "synthetasesyndrome", "anti-jo-1", "antijo1", "anti jo 1"
+)
+
+# Escape special characters and add \\w* to allow plural/suffix variations
+myo_keywords <- str_replace_all(myo_keywords, "[-()]", "\\\\$0")
+myo_keywords <- paste0(myo_keywords, "\\w*")
+
+# regex pattern construction
+keyword_pattern <- paste(myo_keywords, collapse = "|")
+
+# Extract keyword occurrences from the 'text' column
+words_overview_text <- df |>
+  mutate(matches = str_extract_all(text, regex(keyword_pattern, ignore_case = TRUE))) |>
+  unnest(matches) |>
+  mutate(matches = tolower(matches)) |>
+  count(matches, sort = TRUE)
+
+# Extract keyword occurrences from the 'subreddit' column
+words_overview_subreddit <- df |>
+  mutate(matches = str_extract_all(subreddit, regex(keyword_pattern, ignore_case = TRUE))) |>
+  unnest(matches) |>
+  mutate(matches = tolower(matches)) |>
+  count(matches, sort = TRUE)
+
+df_excluded <- df |>
+  filter(
+    # The '!' negates the entire condition inside the parentheses
+    ! (
+      str_detect(text, regex(keyword_pattern, ignore_case = TRUE)) |
+      str_detect(subreddit, regex(keyword_pattern, ignore_case = TRUE))
+    )
+  )
+
+myopath_excluded <- nrow(df_excluded)
+
+# Filter original df to include only rows with a match in either 'text' or 'subreddit'
+df <- df |> 
+  filter(str_detect(text, regex(keyword_pattern, ignore_case = TRUE)) | 
+         str_detect(subreddit, regex(keyword_pattern, ignore_case = TRUE)))
+
+#remove tension myositis and other non inflanmtory types of myositis
+n_before <- nrow(df)
+
+df <- df |>
+  filter(
+    !str_detect(
+      paste(subreddit, text, sep = " "),
+      regex("tension\\s*myositis(?:syndrome)?", ignore_case = TRUE)
+    ) &
+    !str_detect(text, regex("pyomyositis", ignore_case = TRUE)) &
+    !str_detect(text, regex("myositis ossificans", ignore_case = TRUE)) &
+    !str_detect(text, regex("orbital myositis", ignore_case = TRUE))
+  )
+
+n_after <- nrow(df)
+n_removed <- n_before - n_after
+
+cat("Rows before:", scales::comma(n_before),
+    "after:", scales::comma(n_after),
+    "removed:", scales::comma(n_before - n_after), "\n")
+
+```
+
+Since myopathy is a broad term that also refers to non-inflammatory muscle conditions, in a first cleaning step, we excluded posts that did not explicitly refer to necrotizing or inflammatory myopathy/ies (n = `r scales::comma(myopath_excluded)`), while keeping all other posts. Also, posts referring to tension myositis, orbital myositis and myositis ossificans all of which are outside the scope of this study, were excluded (n = `r scales::comma(n_removed)`), leaving `r scales::comma(nrow(df))` posts.
+
+```{r}
+#| message: false
+#| label: (un)select subreddits
+
+exclude_values_general <- c("Step1","Step2","scholar","paidstudies","PaidStudyHub","paidstudy","autotldr","noveltranslations","TheDahmerCase","Dahmer","conspiracy","conspiracyNOPOL","conspiracyundone","sarasota","googletranslate","medicalschool","takecareofmayaFree","skulduggerypleasant","remotedaily","motivation","NBME","zmarter","ChinaInnovation","ketoscience","COVIDZero","Vitiligo","FuckTravisScott","PSSD","buildapc","DebateVaccine","VaxTalk","Autoimmunefaq","SupplementsGuide","weedstocks","medicalschoolanki","anki","dirtypenpals","lakers","OnePiece","tabled","MongoloidCJ","PackItUpinfo","remotedaily","Watches","thesopranos","funny","Cardiomyopathy", "manywords",
+                            "CABAinvest", "wallstreetbets")
+
+exclude_values_animals <- c("AskVet","dogs","puppy101","vet","veterinary","Greyhounds","Petloss","CaneCorso","VetTech","veterinarian","Veterinary","GreatDane","Pets","goldenretrievers","u_bobbiesocksthepug","roughcollies","BelgianMalinois","aww","germanshepherds","pitbulls","dogs","cats","Rabbits","CatAdvice","Boxer","DobermanPinscher","AdviceAnimals","Equestrian","greatdanes","CATHELP","blackcats","bengalcats","catfood","SiberianCats","standardissuecat","catcare","RenalCats","Siamesecats","TuxedoCats","IllegallySmolCats","Catahoula","Feral_Cats","catpics","SupermodelCats","petyoloblog","BeardedDragons","BeardedDragonHelp","BeardedDragon","bengalcatfacts","bengals","bernesemountaindog","bernesemountaindogs","BorderCollie","BorderTerrier","BostonTerrier","BoxerDogs","Boxers","britishshorthair","BritishShorthaircats","Horses","BirdHealth","Chihuahua","PetAdvice","akita","corgi","Pitbull", "National_Pet_Adoption", "greatpyrenees", "ridgebacks", "AfricanGrey")
+
+unwanted_authors <- c("myatomsareyouratoms","Asher_potter","D_Upadhaya","Mentioned_Videos","hibernating_brain","Mk_Makanaki","subredditreports","-NervousPudding-","0100001001010011","Firm-Twist-4497","MuscularDystrophy-ModTeam","Rabbits-ModTeam","SlightlyMadAngus","Lupinepublishers-ACR", "mushroomlover345", "Gir0", "FrozenPixel", "namenerd400")
+
+excluded_subreddits <- tolower(c(exclude_values_general, exclude_values_animals))
+
+excluded_subreddits <- tolower(c(exclude_values_general, exclude_values_animals))
+
+n_before <- nrow(df)
+
+df <- df |>
+  mutate(
+    subreddit_lc = tolower(subreddit),
+    title0 = coalesce(title, ""),
+    selftext0 = coalesce(selftext, "")
+  ) |>
+  filter(
+    !(
+      subreddit_lc %in% excluded_subreddits |
+      str_detect(subreddit, regex("penny", ignore_case = TRUE)) |
+      str_detect(subreddit, regex("dog", ignore_case = TRUE)) |
+      str_detect(subreddit, regex("^u_", ignore_case = TRUE)) |
+      author %in% unwanted_authors |
+      str_detect(title0, regex("masticatory", ignore_case = TRUE)) |
+      str_detect(selftext0, regex("masticatory", ignore_case = TRUE))
+    )
+  ) |>
+  select(-subreddit_lc, -title0, -selftext0)
+
+#remove bots
+df <- df |>
+  filter(!str_detect(author, regex("bot$", ignore_case = TRUE))) |>
+  filter(!str_detect(author, regex("^auto", ignore_case = TRUE))) |>
+  filter(!str_detect(author, regex("admin$", ignore_case = TRUE))) 
+
+n_after <- nrow(df)
+n_removed <- n_before - n_after 
+
+df <- df |>
+  filter(
+    !str_detect(text, regex("dahmer", ignore_case = TRUE)) 
+  )
+
+cat("Rows before:", scales::comma(n_before),
+    "after:", scales::comma(n_after),
+    "removed:", scales::comma(n_before - n_after), "\n")
+```
+
+The next cleaning step consisted of (a.o.) removing posts from subreddits which were about animals (which can also develop myositis), subreddits clearly not directly related to personal experiences with myositis (e.g., subreddits about serial killer Jeffrey Dahmer, a polymyositis patient), and personal subreddits (u/), thus excluding `r n_removed` posts, leaving `r scales::comma(nrow(df))` messages.
+
+```{r}
+#| message: false
+#| label: (un)select deleted posts and duplicates
+
+n_before <- nrow(df)
+
+# Remove [removed]/[deleted] or empty title/selftext 
+
+df <- df |>
+  mutate(
+    across(c(title, selftext), ~ str_trim(.x)),
+    across(c(title, selftext), ~ na_if(.x, ""))   # convert "" -> NA
+  ) |>
+  filter(
+    !if_any(
+      c(title, selftext),
+      ~ is.na(.x) |
+        str_detect(.x, regex("^\\s*\\[(removed|deleted)\\]\\s*$", ignore_case = TRUE))
+    )
+  )
+
+
+# Flag and drop duplicates within 14 days, per author ----
+
+df <- df |>
+  mutate(
+    created_utc = as.POSIXct(created_utc, origin = "1970-01-01"),
+    rowid = row_number()
+  )
+
+dup_flag <- function(dat, col) {
+  col_sym <- sym(col)
+  
+  dat |>
+    filter(!is.na(!!col_sym)) |>
+    group_by(author, !!col_sym) |>
+    arrange(created_utc, .by_group = TRUE) |>
+    mutate(
+      prev = lag(created_utc),
+      .dup = !is.na(prev) & as.numeric(difftime(created_utc, prev, units = "days")) <= 14
+    ) |>
+    ungroup() |>
+    transmute(rowid, !!paste0(col, "_dup") := .dup)
+}
+
+cols <- intersect(c("title", "selftext"), names(df))
+
+flags <- purrr::map(cols, ~ dup_flag(df, .x)) |>
+  reduce(full_join, by = "rowid")
+
+df <- df |>
+  left_join(flags, by = "rowid") |>
+  mutate(
+    across(ends_with("_dup"), ~ coalesce(.x, FALSE)),
+    to_remove = if_any(ends_with("_dup"), identity)
+  ) |>
+  filter(!to_remove) |>
+  select(-rowid, -ends_with("_dup"))
+
+n_after <- nrow(df)
+n_removed <- n_before - n_after
+
+cat("Rows before:", scales::comma(n_before),
+    "after:", scales::comma(n_after),
+    "removed:", scales::comma(n_removed), "\n")
+
+
+```
+
+Next, posts where removed the title or selftext was empty or consisted only of the markers \[removed\] or \[deleted\], and we excluded potential duplicate posts by the same author. Posts were considered duplicates if they had identical title or selftext content and were submitted within 14 days of each other. Only the earliest post in each duplicate set was retained; later duplicates were excluded. Through these steps, `r scales::comma(n_removed)` posts were excluded, leaving `r scales::comma(nrow(df))` posts.
+
+```{r}
+#| message: false
+#| label: remove posts with many urls's, asterisks, line breaks
+
+n_before <- nrow(df)
+
+df <- df |>
+  mutate(
+    # Count URLs
+    n_urls_title = str_count(title, pattern = "https?://\\S+|www\\.\\S+"),
+    n_urls_selftext = str_count(selftext, pattern = "https?://\\S+|www\\.\\S+"),
+
+    # Count asterisks
+    n_asterisks_title = str_count(title, fixed("*")),
+    n_asterisks_selftext = str_count(selftext, fixed("*"))
+  ) |>
+  # Replace NA counts with 0
+  replace_na(list(
+    n_urls_title = 0, n_urls_selftext = 0, 
+    n_asterisks_title = 0, n_asterisks_selftext = 0
+  )) |>
+  # Add totals per row
+  mutate(
+    n_urls_total = n_urls_title + n_urls_selftext,
+    n_asterisks_total = n_asterisks_title + n_asterisks_selftext
+  )
+
+df <- df |>
+  filter(
+   n_asterisks_total < 11, 
+   n_urls_total < 5,
+  is.na(selftext) | !str_detect(selftext, regex("product name", ignore_case = TRUE))
+)
+
+library(purrr)
+
+df <- df |>
+  mutate(
+    # count line breaks
+    n_lines = str_count(selftext, "\n"),
+
+    # split into lines
+    lines = str_split(selftext, "\n"),
+
+    # count words per line
+    line_lengths = map(lines, ~ str_count(.x, "\\S+")),
+
+    # proportion of lines with < 5 words
+    prop_short = map_dbl(line_lengths, ~ mean(.x < 5, na.rm = TRUE)),
+
+    # define: list-like if many breaks AND mostly short lines
+    is_list_like = n_lines >= 20 & prop_short >= 0.7
+  )
+
+df <- df |> filter(!is_list_like)
+
+df |> summarise(
+  over_10  = sum(n_lines > 10),
+  over_20  = sum(n_lines > 20),
+  over_50  = sum(n_lines > 50),
+  over_100 = sum(n_lines > 100),
+  over_200 = sum(n_lines > 200)
+)
+
+# filter out 100% only short sentences & >= 50 sentences
+df <- df |>
+  filter(prop_short != 1 | n_lines >= 50) 
+n_after <- nrow(df)
+n_removed <- n_before - n_after 
+
+cat("Rows before:", scales::comma(n_before),
+    "after:", scales::comma(n_after),
+    "removed:", scales::comma(n_before - n_after), "\n")
+```
+
+In a next step, we aimed to remove posts that look like spam, commercial content, or non-discursive lists. Posts containing excessive URLs, formatting markers, or explicit promotional cues were removed, as were submissions dominated by long sequences of short, list-like lines (e.g., symptom or supplement lists), which do not provide interpretable patient perspectives. Through quantifying line breaks and the proportion of very short sentences, we identified and excluded content that lacked coherent narrative structure. During this step, `r scales::comma(n_removed)` were removed, leaving `r scales::comma(nrow(df))` posts
+
+```{r}
+#| message: false
+#| label: removing non English selftext and text < 10 words
+
+n_before <- nrow(df)
+
+df <- df |>
+  filter(
+    n_words > 9, # only posts with 10 words or more
+    cld2::detect_language(text) == "en",                              # keep English
+    !is.na(subreddit), subreddit != "omoshiroi_eigo_bunpou",    # drop non-English sub
+      )
+
+n_after <- nrow(df)
+n_removed <- n_before - n_after 
+
+cat("Rows before:", scales::comma(n_before),
+    "after:", scales::comma(n_after),
+    "removed:", scales::comma(n_before - n_after), "\n")
+
+subr <- df |> 
+  count(subreddit, name = "freq") |>          # frequency
+  arrange(desc(freq)) |>                      # sort
+  mutate(
+    prop = freq / sum(freq),                  # proportion
+    cum_prop = cumsum(prop)                   # cumulative proportion
+  )
+length(unique(df$author))
+```
+
+In the next step, all non-English posts and posts with fewer than 10 words were excluded, after which `r scales::comma(nrow(df))` posts remained, posted by `r scales::comma(length(unique(df$author)))` unique authors. The figure below shows the number of myositis related posts per month.
+
+```{r}
+#| message: false
+#| label: create lemmatized and cleaned df$text_clean column with udpipe
+
+download_info <- udpipe_download_model(language = "english-ewt")
+
+# The 'download_info' object (a data frame) contains the path to the downloaded model.
+# We'll extract the actual filename/path from it.
+model_path_downloaded <- download_info$file_model
+
+# Check if the model file exists (it should, after the download attempt)
+if (!file.exists(model_path_downloaded)) {
+  stop("Failed to download the English udpipe model.")
+}
+
+# Load the English udpipe model into your R session
+ud_model <- udpipe_load_model(file = model_path_downloaded)
+
+# 1) Light cleaning + Unicode normalization (keep punctuation for UDPipe)
+df$text_clean <- df$text |>
+  str_replace_all("https?://\\S+|www\\.\\S+", " ") |>
+  stri_trans_general("NFKC") |>                 # normalize accents/compatibility
+  str_replace_all("\\p{Cf}", " ") |>            # remove zero-width/format chars
+  str_squish()
+
+# 2) Annotate
+
+# make sure df has a doc_id column
+if (!"doc_id" %in% names(df)) {
+  df$doc_id <- as.character(seq_len(nrow(df)))
+}
+
+x <- udpipe_annotate(ud_model, x = df$text_clean, doc_id = df$doc_id)
+x_df <- as.data.frame(x) |>
+  mutate(lemma = ifelse(tolower(token) == "feedback", "feedback", lemma))
+
+# 3) Post-process: keep content words; fall back to token if tag looks wrong
+content_upos <- c("NOUN","PROPN","ADJ","VERB")
+
+domain_map <- c( # protect key RA/biomed terms
+  "joint"="joint", "joints"="joint",
+  "flare"="flare", "flares"="flare",
+  "ra"="ra", "ccp"="ccp", "rf"="rf",
+  "myositis"="myositis", "neuropathy"="neuropathy"
+)
+
+lemmas_filtered <- x_df |>
+  transmute(
+    doc_id, token = tolower(token), lemma = tolower(lemma), upos
+  ) |>
+  # If UDPipe calls a long alphabetic token a PRON/DET/ADP, treat lemma as the token
+  mutate(bad_tag = (!upos %in% content_upos) & grepl("^[a-z][a-z'-]{3,}$", token),
+         lemma = if_else(bad_tag, token, lemma)) |>
+  # Sanity: if lemma has weird chars, fall back to token
+  mutate(lemma = if_else(!grepl("^[a-z][a-z'-]*$", lemma), token, lemma)) |>
+  # Domain dictionary overrides
+  mutate(lemma = if_else(token %in% names(domain_map), domain_map[token], lemma)) |>
+  # Finally filter to content words and non-stopwords (but keep noun "back")
+  filter(upos %in% content_upos) |>
+  filter((lemma == "back" & upos == "NOUN") | !(lemma %in% stop_words$word))
+
+lemmas_filtered <- lemmas_filtered |>
+  filter(!(lemma %in% c("ive", "im", "dont", "cant", "wont"))) |>
+  mutate(lemma = if_else(lemma == "jous", "joint", lemma)) #correcting a mistake in the udpipe process which replaces joint by jous
+
+# 4) Rebuild lemmatized text
+lemmatized_text_df <- lemmas_filtered |>
+  group_by(doc_id) |>
+  summarise(lemmatized_text = paste(lemma, collapse = " "), .groups="drop")
+
+df <- df |> left_join(lemmatized_text_df, by = "doc_id")
+# You can inspect the new column
+head(df |> select(doc_id, text_clean, lemmatized_text))
+
+#write_feather(df, here("data", "myositis_submissions_2005_july2025_clean.feather"))
+#write_feather(x_df, here("data", "myositis_lemmatized_udpipe.feather"))
+```
+
+```{r}
+df_summary <- df |>
+  mutate(year_month = as.Date(floor_date(created_utc, "month"))) |>
+  group_by(year_month) |>
+  summarize(count = n())
+
+p <- ggplot(df_summary, aes(x = year_month, y = count)) +
+  geom_point() +
+  geom_jitter() +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  labs(title = "Number of Mentions per Month",
+       x = "Year",
+       y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 50, hjust = 1))
+
+p
+```
+
+The number of myositis related posts has increased to close to 100 per month in 2024, showing a steep growth after 2020 (as did Reddit as a whole). Over half of the submissions were posted in the years 2024 or 2025, as the table below shows.
+
+```{r}
+#| message: false
+#| echo: false
+
+library(knitr)
+library(kableExtra)
+subr <- df |>
+  count(year) |>
+  rename(freq = n) |>
+  mutate(percentage = (freq / sum(freq)) * 100)|>
+  arrange(desc(year)) |>
+  mutate(cum_percentage = cumsum(percentage)) |>
+  mutate(percentage = round(percentage, 1),
+         cum_percentage = round(cum_percentage,1))
+
+# Create table
+subr |>
+  kable() |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
+
+Mentions of myositis are spread across a wide range of subreddits, as the tables below show. There are subreddits specifically for myositis (e.g., r/dermatomyositis), but the vast majority of mentions occurs in more general health related forums (e.g., r/AskDocs) or general autoimmunity related subreddits (e.g., r/Autoimmune).
+
+```{r}
+#| message: false
+#| echo: false
+
+library(knitr)
+library(kableExtra)
+subr <- df |>
+  count(subreddit) |>
+  rename(freq = n) |>
+  mutate(percentage = (freq / sum(freq)) * 100)|>
+  arrange(desc(freq)) |>
+  mutate(cum_percentage = cumsum(percentage)) |>
+  mutate(percentage = round(percentage, 1),
+         cum_percentage = round(cum_percentage,1)) |>
+  slice_head(n = 10) # Select top 10 subreddits
+
+# Create table
+subr |>
+  kable() |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+The table below shows the occurrences of myositis related words across all submissions.
+
+```{r}
+df$text <- paste(df$title, df$selftext, sep = " ")
+
+# Assuming your data frame is called 'df' and the text column is called 'text'
+text_col <- tolower(df$text)
+text_col <- gsub("_", " ", text_col)
+
+# Define a regular expression pattern to match words containing "myositis"
+pattern <- "\\b\\w*myositis\\w*\\b"
+
+# Find all matches in the text column
+matches <- str_extract_all(text_col, pattern)
+
+# Create a vector of all matched words
+matched_words <- unlist(matches)
+
+# Remove duplicates and count occurrences
+word_counts <- table(matched_words)
+
+# Convert the table to a data frame
+word_counts_df <- as.data.frame(word_counts)
+colnames(word_counts_df) <- c("Word", "Count")
+
+# Sort the data frame by the count in descending order
+word_counts_df <- word_counts_df[order(-word_counts_df$Count), ]
+
+word_counts_df <- word_counts_df |>
+  mutate(percentage = (Count / sum(Count)) * 100)|>
+  arrange(desc(Count)) |>
+  mutate(cum_percentage = cumsum(percentage)) |>
+  mutate(percentage = round(percentage, 1),
+         cum_percentage = round(cum_percentage,1)) |>
+  slice_head(n = 20) # Select top 10 subreddits
+
+# Print the result
+word_counts_df |>
+  kable() |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r}
+pronoun_pattern <- "\\b(i|me|my|she|he|her|his)\\b"
+
+# Filter matching rows
+df_pronouns <- df |>
+  filter(str_detect(text, regex(pronoun_pattern, ignore_case = TRUE)))
+
+df_no_pronouns <- df |>
+  filter(!str_detect(text, regex(pronoun_pattern, ignore_case = TRUE)))
+
+```

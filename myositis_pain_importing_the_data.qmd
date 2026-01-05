@@ -1,0 +1,232 @@
+---
+title: "Myositis"
+format:
+  html: default
+  pdf: default
+  docx: default
+editor: visual
+execute:
+  echo: false
+  warning: false
+editor_options: 
+  chunk_output_type: inline
+always_allow_html: yes
+---
+
+## Importing the data
+
+```{r}
+#| message: false
+#| label: loading-libraries-and-data
+
+rm(list = ls()[!sapply(ls(), function(x) is.function(get(x)))])
+cat("\014")
+options(scipen = 999) 
+
+# Loading required libraries
+library(tidyverse); library(lubridate)
+library(stringr); library(furrr); library(jsonlite); library(here);library(feather)
+library(arrow)
+
+# Uncomment to rerun parquet data extraction
+# source("/Users/peterkerkhof/surfdrive/R/reddit/reddit-data-hub/queries/query_parquet_myositis.R")
+
+cut_off_date <- as.numeric(as.POSIXct("2025-08-01", tz = "UTC"))
+cut_off_date <- 1754006400 - 7200
+
+df_query <- arrow::read_feather(
+  here("..", "..", "reddit-data-hub", "queries", "query-output", "myositis_submissions20250910.feather")
+) |>
+  mutate(across(everything(), as.character)) |>
+  mutate(source = "parquet") |>
+  filter(as.numeric(created_utc) < cut_off_date) 
+
+
+folder_path <- here("..", "..", "reddit-data-hub", "subreddits","data", "myositis")
+
+# List all JSONL files in the /data directory
+files <- list.files(
+  path = folder_path,
+  pattern = "post.*\\.jsonl$",
+  full.names = TRUE,
+  recursive = TRUE,
+  ignore.case = TRUE
+)
+
+read_jsonl <- function(file_path) {
+  con <- file(file_path, open = "r") # Open the connection
+  tryCatch({
+    data <- stream_in(con, verbose = FALSE)
+    return(data)
+  }, error = function(e) {
+    message(sprintf("Error reading %s: %s", file_path, e$message))
+    return(NULL)
+  }, finally = {
+    if (isOpen(con)) {
+      close(con)
+    }
+  })
+}
+
+df_subreddits <- map_dfr(files, read_jsonl) |>
+  select(any_of(colnames(df_query))) |>
+  mutate(across(everything(), as.character)) |>
+  mutate(source = "subreddits") 
+
+df <- bind_rows(df_query, df_subreddits) |>
+  mutate(created_utc = as.numeric(created_utc)) |>  # fix hier
+  filter(created_utc < cut_off_date)  |>
+  arrange(created_utc) |>
+  distinct(across(-source), .keep_all = TRUE) |>
+  mutate(
+    created_utc = as.POSIXct(as.numeric(created_utc), origin = '1970-01-01'),
+    retrieved_on = as.POSIXct(as.numeric(retrieved_on), origin = '1970-01-01')
+  ) |>
+  mutate(
+    date = date(created_utc),
+    year = year(created_utc),
+    month = month(created_utc),
+    month_yr = format_ISO8601(created_utc, precision = "ym"),
+    week_number = isoweek(date)
+  )|>
+  select(c(-body,-link_id, -parent_id))
+
+n_posts_subreddits <- nrow(df_subreddits) 
+
+```
+
+Data were retrieved from the reddit Pushshift archive, distributed via Academic Torrents. Pushshift has collected nearly all publicly available Reddit submissions and comments since 2005 and continues to release monthly archival dumps (Academic Torrents, 2025). Although Reddit revoked Pushshift’s real-time API access in 2023, the archival dumps remain continuously updated. We conducted a query for posts containing the words myopath, myositis, synthetase syndrome, and anti-Jo-1 in either the title or the self-text field (the fields that contain the title and the main body of a submission). The search allowed for different variations of these terms (e.g., myopathies, myopathy, dermatomyositis, antijo1, etc.) up to August 1, 2025, while excluding posts containing the word cardiomyopathy. Comments (both to submissions and to other comments) were excluded, as they are less likely to contain patient experiences or to be written with the intent to share a story, seek advice, or narrate symptoms. Submissions are also typically more self-contained: their content can be interpreted without additional conversational context.
+
+The query was deliberately broad, with the resulting data subsequently refined through several cleaning steps. The query was case-insensitive and returned `r scales::comma(nrow(df_query))` posts, including those mentioning myositis and myopath either as standalone words or as parts of longer words (e.g., dermatomyositis, myopathy, myopathies). In addition, we included all submissions (`r n_posts_subreddits`) from three myositis-related subreddits: r/dermatomyositis, r/polymyositis, and r/myositis. In total, the dataset comprised `r scales::comma(nrow(df))` posts published between July 2008 and July 31, 2025.
+
+```{r}
+#| message: false
+#| label: trim and merge all text columns; adding a dot after the title
+
+#rm(list = setdiff(ls(), "df"))
+
+df <- df |>
+  mutate(
+    selftext = str_trim(selftext),
+    title    = str_trim(title),
+
+    # Determine whether title ends with punctuation: . ? ! :
+    title_punctuated = str_detect(title, "[\\.\\?\\!\\:]$"),
+
+    # Add ". " only if:
+    #  - title is not NA/empty
+    #  - AND it does not already end with punctuation
+    title_clean = case_when(
+      is.na(title) | title == "" ~ "",
+      title_punctuated ~ paste0(title, " "),        # ends with punctuation → add space only
+      TRUE ~ paste0(title, ". ")                    # no punctuation → add ". "
+    ),
+
+    # Merge title + selftext
+    text = paste0(title_clean, selftext),
+
+    # Cleanup
+    text = gsub("^NA\\.\\s*", "", text),
+    text = gsub("NA", "", text),
+    text = tolower(text),
+    text = str_replace_all(text, "[-_]", " ")
+  ) |>
+  select(-title_punctuated, -title_clean) |>
+  select(author, created_utc, text, everything())
+
+```
+
+```{r}
+#| message: false
+#| label: establishing which query keyword
+
+# Define your keywords
+keywords <- c(
+  "myopath", "myositis", "synthetase syndrome", "synthetasesyndrome", "anti-jo-1", "antijo1", "anti jo 1"
+)
+
+# Create a single regex pattern for case-insensitive matching
+pattern <- str_c(keywords, collapse = "|")
+
+# Extract matched keywords from the combined text column
+df <- df |>
+  mutate(
+    keywords_found_list = str_extract_all(text, regex(pattern, ignore_case = TRUE)),
+    keywords_found = sapply(keywords_found_list, function(x) {
+      if (length(x) == 0 || all(is.na(x))) {
+        NA_character_
+      } else {
+        str_c(unique(x), collapse = ", ")
+      }
+    })
+  ) |>
+  select(-keywords_found_list)
+
+# Define replacements
+replacements <- c(
+  "anti jo 1" = "anti-jo-1",
+  "antijo1"   = "anti-jo-1")
+
+# Apply replacements
+df <- df |> 
+  mutate(text = str_replace_all(text, replacements))
+
+#remove different outcomes based on the order of keywords
+df <- df |>
+  mutate(
+    keywords_found_list = str_extract_all(text, regex(pattern, ignore_case = TRUE)),
+    keywords_found = sapply(keywords_found_list, function(x) {
+      if (length(x) == 0 || all(is.na(x))) {
+        NA_character_
+      } else {
+        sorted_unique <- sort(unique(x))
+        str_c(sorted_unique, collapse = ", ")
+      }
+    })
+  ) |>
+  select(-keywords_found_list)
+
+keyw <- as.data.frame(table(df$keywords_found)) |>
+  arrange(desc(Freq))
+```
+
+```{r}
+#| message: false
+#| label: create post url
+
+df <- df |>
+  mutate(
+    post_url = paste0(
+      "https://www.reddit.com/comments/",
+      id
+    )
+  )
+
+```
+
+```{r}
+#| message: false
+#| label: create anonymous user accounts
+
+library(quanteda)
+
+
+df <- df |>
+  mutate(
+    n_words = str_count(text, "\\w+"),
+    n_tokens = ntoken(tokens(text)),
+  )
+
+#anonymize authors
+df$author_ano <- anonymizer::anonymize(df$author, 
+                                         .algo = "crc32", .seed = 0, 
+                                         .chars = letters,
+                                         .n_chars = 5L)
+df <-df |> #rename deleted author names
+  mutate(author_ano = str_replace(author_ano, "3c0a4086", "deleted")) 
+
+df <- df |>
+  select(source, subreddit, created_utc, text, everything()) 
+
+write_feather(df, here("data", "myositis_submissions_incl_subreddits_2005_july2025.feather"))
+```
