@@ -1,3 +1,52 @@
+# .gitignore for Myositis & Pain Project
+# Save this as ".gitignore" in your project root folder
+
+# ====================
+# DATA FOLDERS - Your actual data stays local
+# ====================
+data/
+Data/
+reddit-data-hub/
+LLM Output/
+llm_output/
+raw_data/
+processed_data/
+
+# Specific data file types
+*.feather
+*.parquet
+*.csv
+*.xlsx
+*.xls
+*.rds
+*.rda
+*.RData
+
+# If you want to include example/small reference files, use ! to un-ignore:
+# !data/example_file.csv
+# !data/README.md
+
+
+# ====================
+# OUTPUT FILES - Large generated files
+# ====================
+# Exclude large output images (unless you want to track them)
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.html
+*.udpipe
+
+# If you want to include specific outputs (like your semantic network), un-ignore them:
+# !Myositis_Semantic_Network_HighRes.png
+# Or keep all files in a specific folder:
+# !output/*.png
+
+
+# ====================
+# R SPECIFIC FILES
+# ====================
 # History files
 .Rhistory
 .Rapp.history
@@ -25,12 +74,13 @@
 vignettes/*.html
 vignettes/*.pdf
 
-# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
+# OAuth2 token
 .httr-oauth
 
-# knitr and R markdown default cache directories
+# knitr and R markdown cache directories
 *_cache/
 /cache/
+*_files/
 
 # Temporary files created by R markdown
 *.utf8.md
@@ -47,3 +97,51 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+
+# ====================
+# QUARTO SPECIFIC
+# ====================
+/.quarto/
+_site/
+_freeze/
+
+
+# ====================
+# macOS FILES
+# ====================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+
+# ====================
+# API KEYS & SENSITIVE INFO
+# ====================
+# Make sure not to commit any files with API keys!
+*api_key*
+*API_KEY*
+.env
+config.R
+secrets.R
+
+
+# ====================
+# NOTES:
+# ====================
+# This .gitignore will:
+# ✓ Keep your Reddit data local (not on GitHub)
+# ✓ Keep your LLM outputs local
+# ✓ Track your scripts (.R, .qmd files)
+# ✓ Track your README and documentation
+# 
+# To include specific files that would otherwise be ignored, use:
+# !path/to/specific/file.csv
