@@ -23,26 +23,27 @@ rm(list = ls()[!sapply(ls(), function(x) is.function(get(x)))])
 cat("\014")
 options(scipen = 999) 
 
+
 # Loading required libraries
 library(tidyverse); library(lubridate)
 library(stringr); library(furrr); library(jsonlite); library(here);library(feather)
 library(arrow)
 
+source(here("config.R"))
+
 # Uncomment to rerun parquet data extraction
-# source("/Users/peterkerkhof/surfdrive/R/reddit/reddit-data-hub/queries/query_parquet_myositis.R")
+#source(file.path(REDDIT_DATA_PATH, "queries/query_parquet_myositis.R"))
 
 cut_off_date <- as.numeric(as.POSIXct("2025-08-01", tz = "UTC"))
 cut_off_date <- 1754006400 - 7200
 
-df_query <- arrow::read_feather(
-  here("..", "..", "reddit-data-hub", "queries", "query-output", "myositis_submissions20250910.feather")
+df_query <- read_feather(file.path(REDDIT_DATA_PATH, "queries/query-output/myositis_submissions20250910.feather")
 ) |>
   mutate(across(everything(), as.character)) |>
   mutate(source = "parquet") |>
   filter(as.numeric(created_utc) < cut_off_date) 
 
-
-folder_path <- here("..", "..", "reddit-data-hub", "subreddits","data", "myositis")
+folder_path <- file.path(REDDIT_DATA_PATH,"subreddits/data/myositis")
 
 # List all JSONL files in the /data directory
 files <- list.files(

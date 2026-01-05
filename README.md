@@ -6,6 +6,23 @@ This repository contains all project-specific scripts, data files, and analyses 
 The README documents **where data come from, where intermediate files are stored,
 and which scripts produce which outputs**.
 
+
+## Setup Instructions
+
+### Data Configuration
+
+This project references external data stored outside the repository.
+
+1. Copy `config_template.R` to `config.R`
+2. Edit `config.R` and update `REDDIT_DATA_PATH` to point to your reddit-data-hub location
+3. The `config.R` file is excluded from Git (contains local paths)
+
+### Required Data Structure
+
+The reddit data hub should contain:
+- `queries/query-output/` - Queries & Query results
+- `subreddits/data/myositis/` - Subreddit archives
+
 ---
 
 ## 1. Raw data sources

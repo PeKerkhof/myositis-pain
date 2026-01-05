@@ -142,6 +142,9 @@ secrets.R
 # Word documents (if you don't want them tracked)
 *.docx
 
+# Local configuration (not shared)
+config.R
+
 # ====================
 # NOTES:
 # ====================
