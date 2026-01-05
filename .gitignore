@@ -133,6 +133,14 @@ _freeze/
 config.R
 secrets.R
 
+# System files
+.DS_Store
+   
+# Model files
+*.udpipe
+   
+# Word documents (if you don't want them tracked)
+*.docx
 
 # ====================
 # NOTES:
