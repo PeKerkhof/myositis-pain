@@ -32,7 +32,7 @@ Raw Reddit data were collected from two sources:
 
 All project-specific work is located in:
 
-reddit-projects/myositis-pain/
+myositis-pain/
 
 This directory contains all scripts, processed data, and outputs used for analysis.
 
