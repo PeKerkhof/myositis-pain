@@ -209,9 +209,6 @@ df <- df |>
 #| message: false
 #| label: create anonymous user accounts
 
-library(quanteda)
-
-
 df <- df |>
   mutate(
     n_words = str_count(text, "\\w+"),
@@ -229,5 +226,42 @@ df <-df |> #rename deleted author names
 df <- df |>
   select(source, subreddit, created_utc, text, everything()) 
 
-write_feather(df, here("data", "myositis_submissions_incl_subreddits_2005_july2025.feather"))
 ```
+
+```{r}
+#| message: false
+#| label: determine post type
+
+
+
+```{r}
+#| message: false
+#| label: create post type column
+
+# Create post_type column to distinguish submissions, comments, and comments to comments
+df <- df |>
+  mutate(
+    post_type = case_when(
+      is.na(parent_id) | parent_id == "" ~ "submission",
+      str_starts(parent_id, "t3_") ~ "comment",
+      str_starts(parent_id, "t1_") ~ "comment_to_comment",
+      TRUE ~ "unknown"
+    )
+  )
+
+# Show distribution of post types
+post_type_counts <- df |>
+  count(post_type, sort = TRUE) |>
+  mutate(
+    percentage = scales::percent(n / sum(n), accuracy = 0.1)
+  )
+
+print(post_type_counts)
+
+write_feather(df, file.path(DATA_PATH, "data", "myositis_submissions_incl_subreddits_2005_july2025.feather"))
+
+```
+
+
+
+

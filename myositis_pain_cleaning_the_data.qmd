@@ -32,9 +32,11 @@ library(tidytext)
 library(stringi)
 library(arrow)
 
+source(here("config.R"))
+
 # Loading Reddit parquet data
 
-df_start <- arrow::read_feather(here("data", "myositis_submissions_incl_subreddits_2005_july2025.feather")) 
+df_start <- arrow::read_feather(file.path(DATA_PATH, "data", "myositis_submissions_incl_subreddits_2005_july2025.feather")) 
 
 df <- df_start 
 
@@ -443,8 +445,8 @@ df <- df |> left_join(lemmatized_text_df, by = "doc_id")
 # You can inspect the new column
 head(df |> select(doc_id, text_clean, lemmatized_text))
 
-#write_feather(df, here("data", "myositis_submissions_2005_july2025_clean.feather"))
-#write_feather(x_df, here("data", "myositis_lemmatized_udpipe.feather"))
+#write_feather(df, file.path(DATA_PATH, "data", "myositis_submissions_2005_july2025_clean.feather"))
+#write_feather(x_df, file.path(DATA_PATH, "data", "myositis_lemmatized_udpipe.feather"))
 ```
 
 ```{r}

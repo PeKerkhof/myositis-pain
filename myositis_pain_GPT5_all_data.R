@@ -9,13 +9,15 @@ library(jsonlite)
 library(here)
 library(arrow)
 
+source(here("config.R"))
+
 #### Load API Key ####
 api_key <- Sys.getenv("OPENAI_API_KEY")
 if (api_key == "") stop("Error: OPENAI_API_KEY is not set.")
 
 #### Load FULL DATASET ####
 # Adjust file path as needed:
-file_path <- here("data", "myositis_submissions_2005_july2025_clean.feather")
+file_path <- file.path(DATA_PATH, "data", "myositis_submissions_2005_july2025_clean.feather")
 
 df <- arrow::read_feather(file_path) |>
   filter(!is.na(text) & trimws(text) != "")
@@ -172,8 +174,8 @@ df <- df |>
 
 timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
-outfile <- sprintf("LLM output/full_predictions_%s_%s.feather",
-                   model_label, timestamp)
+outfile <- file.path(DATA_PATH, "LLM output", sprintf("full_predictions_%s_%s.feather",
+                   model_label, timestamp))
 
 arrow::write_feather(df, outfile)
 
@@ -187,7 +189,7 @@ cat("Saved to: ", outfile, "\n")
 library(textreuse)
 library(igraph)
 
-df <- arrow::read_feather(here("LLM output", "full_predictions_gpt51_20251210_181138.feather")) |>
+df <- arrow::read_feather(file.path(DATA_PATH, "LLM output", "full_predictions_gpt51_20251210_181138.feather")) |>
   filter(majority_vote == "Yes") |>
   arrange(desc(created_utc))
 
@@ -299,5 +301,5 @@ print(paste("Rows after dedup:", nrow(df_keep)))
 
 arrow::write_feather(
   df_keep,
-  here("LLM Output", "majority_vote_gpt51_20251210_181138.feather")
+  file.path(DATA_PATH, "LLM output", "majority_vote_gpt51_20251210_181138.feather")
 )

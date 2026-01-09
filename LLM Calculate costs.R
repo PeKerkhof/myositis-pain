@@ -1,4 +1,7 @@
 library(reticulate)
+library(here)
+
+source(here("config.R"))
 
 estimate_gpt51_cost <- function(
     text_vector,
@@ -65,7 +68,7 @@ estimate_gpt51_cost <- function(
     )
   )
 }
-df <- arrow::read_feather("data/myositis_submissions_2005_july2025_clean.feather")
+df <- arrow::read_feather(file.path(DATA_PATH, "data", "myositis_submissions_2005_july2025_clean.feather"))
 
 
 result <- estimate_gpt51_cost(

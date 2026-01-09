@@ -13,12 +13,14 @@ library(future)
 library(future.apply)
 library(httr2)
 
+source(here("config.R"))
+
 #### Load API Key ####
 api_key <- Sys.getenv("OPENAI_API_KEY")
 if (api_key == "") stop("Error: OPENAI_API_KEY is not set.")
 
 #### Load Data ####
-file_path <- here("LLM output", "pain_posts_llm_handcoded.csv")
+file_path <- file.path(DATA_PATH, "LLM output", "pain_posts_llm_handcoded.csv")
 
 df <- readr::read_csv(file_path, show_col_types = FALSE) |>
   select(subreddit, ground_truth, text) |>
@@ -226,8 +228,8 @@ metrics_df <- bind_rows(
 ###################################
 timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
-write_csv(df, sprintf("LLM output/results_%s_%s.csv", model_label, timestamp))
-write_csv(metrics_df, sprintf("LLM output/metrics_%s_%s.csv", model_label, timestamp))
+write_csv(df, file.path(DATA_PATH, "LLM output", sprintf("results_%s_%s.csv", model_label, timestamp)))
+write_csv(metrics_df, file.path(DATA_PATH, "LLM output", sprintf("metrics_%s_%s.csv", model_label, timestamp)))
 
 print(metrics_df)
 cat("\n✅ Finished — Model:", model_name, "(", model_label, ")\n")

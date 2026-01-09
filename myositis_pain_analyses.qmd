@@ -70,7 +70,9 @@ library(googlesheets4)
 library(lubridate)   # floor_date() is used later
 library(knitr)
 
-df <- arrow::read_feather(here("LLM output", "majority_vote_gpt51_20251210_181138.feather"))
+source(here("config.R"))
+
+df <- arrow::read_feather(file.path(DATA_PATH, "LLM output", "majority_vote_gpt51_20251210_181138.feather"))
 ```
 
 ```{r}
