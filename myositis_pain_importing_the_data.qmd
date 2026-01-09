@@ -1,5 +1,8 @@
 ---
-title: "Myositis"
+title: "Myositis & Pain: Data Import Pipeline"
+subtitle: "Importing and merging Reddit data from Pushshift archives and subreddit dumps"
+author: "Peter Kerkhof"
+date: last-modified
 format:
   html: default
   pdf: default
@@ -8,44 +11,110 @@ editor: visual
 execute:
   echo: false
   warning: false
-editor_options: 
+editor_options:
   chunk_output_type: inline
 always_allow_html: yes
 ---
 
-## Importing the data
+## Overview
+
+This script imports Reddit submission data from two sources:
+
+1. **Pushshift Parquet Archives** - Queried from Academic Torrents Reddit dumps
+2. **Subreddit JSONL Archives** - Downloaded from Arctic Shift for specific myositis subreddits
+
+The data is merged, deduplicated, cleaned, and saved as a single feather file for downstream analysis.
+
+---
+
+## 1. Setup and Configuration
 
 ```{r}
 #| message: false
-#| label: loading-libraries-and-data
+#| label: setup-environment
 
+# -----------------------------------------------------------------------------
+# ENVIRONMENT SETUP
+# -----------------------------------------------------------------------------
+# Clear environment (preserve functions) and reset console
 rm(list = ls()[!sapply(ls(), function(x) is.function(get(x)))])
 cat("\014")
-options(scipen = 999) 
 
+# Disable scientific notation for cleaner number display
+options(scipen = 999)
+```
 
-# Loading required libraries
-library(tidyverse); library(lubridate)
-library(stringr); library(furrr); library(jsonlite); library(here);library(feather)
+```{r}
+#| message: false
+#| label: load-libraries
+
+# -----------------------------------------------------------------------------
+# LOAD REQUIRED LIBRARIES
+# -----------------------------------------------------------------------------
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(furrr)
+library(jsonlite)
+library(here)
+library(feather)
 library(arrow)
 
+# Load project configuration (DATA_PATH, REDDIT_DATA_PATH)
 source(here("config.R"))
+```
 
-# Uncomment to rerun parquet data extraction
-#source(file.path(REDDIT_DATA_PATH, "queries/query_parquet_myositis.R"))
+---
 
+## 2. Import Pushshift Query Results
+
+The Pushshift archive contains Reddit data distributed via Academic Torrents. We query this archive for posts containing myositis-related keywords.
+
+```{r}
+#| message: false
+#| label: import-parquet-query
+
+# -----------------------------------------------------------------------------
+# IMPORT PUSHSHIFT PARQUET QUERY RESULTS
+# -----------------------------------------------------------------------------
+
+# Define cutoff date: August 1, 2025
+# Posts after this date are excluded to ensure a consistent dataset
 cut_off_date <- as.numeric(as.POSIXct("2025-08-01", tz = "UTC"))
-cut_off_date <- 1754006400 - 7200
+cut_off_date <- 1754006400 - 7200  # Adjusted for timezone
 
-df_query <- read_feather(file.path(REDDIT_DATA_PATH, "queries/query-output/myositis_submissions20250910.feather")
+# To re-run the parquet query (slow), uncomment:
+# source(file.path(REDDIT_DATA_PATH, "queries/query_parquet_myositis.R"))
+
+# Load pre-queried results from feather file
+# Query searched for: myopath*, myositis, synthetase syndrome, anti-jo-1
+# Excluded: cardiomyopathy
+df_query <- read_feather(
+  file.path(REDDIT_DATA_PATH, "queries/query-output/myositis_submissions20250910.feather")
 ) |>
   mutate(across(everything(), as.character)) |>
   mutate(source = "parquet") |>
-  filter(as.numeric(created_utc) < cut_off_date) 
+  filter(as.numeric(created_utc) < cut_off_date)
+```
 
-folder_path <- file.path(REDDIT_DATA_PATH,"subreddits/data/myositis")
+---
 
-# List all JSONL files in the /data directory
+## 3. Import Subreddit Archives
+
+In addition to the keyword query, we import all posts from three myositis-specific subreddits (r/dermatomyositis, r/polymyositis, r/myositis) downloaded from Arctic Shift.
+
+```{r}
+#| message: false
+#| label: import-subreddit-archives
+
+# -----------------------------------------------------------------------------
+# IMPORT SUBREDDIT JSONL ARCHIVES
+# -----------------------------------------------------------------------------
+
+# Path to subreddit JSONL files (from Arctic Shift)
+folder_path <- file.path(REDDIT_DATA_PATH, "subreddits/data/myositis")
+
+# Find all post JSONL files recursively
 files <- list.files(
   path = folder_path,
   pattern = "post.*\\.jsonl$",
@@ -54,8 +123,9 @@ files <- list.files(
   ignore.case = TRUE
 )
 
+# Helper function: Read JSONL file with error handling
 read_jsonl <- function(file_path) {
-  con <- file(file_path, open = "r") # Open the connection
+  con <- file(file_path, open = "r")
   tryCatch({
     data <- stream_in(con, verbose = FALSE)
     return(data)
@@ -63,93 +133,141 @@ read_jsonl <- function(file_path) {
     message(sprintf("Error reading %s: %s", file_path, e$message))
     return(NULL)
   }, finally = {
-    if (isOpen(con)) {
-      close(con)
-    }
+    if (isOpen(con)) close(con)
   })
 }
 
+# Read all JSONL files and combine into single dataframe
+# Select only columns that exist in the parquet query results
 df_subreddits <- map_dfr(files, read_jsonl) |>
   select(any_of(colnames(df_query))) |>
   mutate(across(everything(), as.character)) |>
-  mutate(source = "subreddits") 
+  mutate(source = "subreddits")
+
+# Store count for reporting
+n_posts_subreddits <- nrow(df_subreddits)
+```
+
+---
+## 4. Merge and Deduplicate
+
+```{r}
+#| message: false
+#| label: merge-and-deduplicate
+
+# -----------------------------------------------------------------------------
+# MERGE DATA SOURCES AND REMOVE DUPLICATES
+# -----------------------------------------------------------------------------
 
 df <- bind_rows(df_query, df_subreddits) |>
-  mutate(created_utc = as.numeric(created_utc)) |>  # fix hier
-  filter(created_utc < cut_off_date)  |>
+  # Ensure created_utc is numeric for filtering
+  mutate(created_utc = as.numeric(created_utc)) |>
+  # Apply cutoff date filter
+  filter(created_utc < cut_off_date) |>
+  # Sort chronologically
   arrange(created_utc) |>
+  # Remove duplicates: keep first occurrence (from parquet if both sources have it)
+  # Ignore 'source' column when checking for duplicates
   distinct(across(-source), .keep_all = TRUE) |>
+  # Convert Unix timestamps to datetime objects
   mutate(
     created_utc = as.POSIXct(as.numeric(created_utc), origin = '1970-01-01'),
     retrieved_on = as.POSIXct(as.numeric(retrieved_on), origin = '1970-01-01')
   ) |>
+  # Extract date components for temporal analysis
+
   mutate(
     date = date(created_utc),
     year = year(created_utc),
     month = month(created_utc),
     month_yr = format_ISO8601(created_utc, precision = "ym"),
     week_number = isoweek(date)
-  )|>
-  select(c(-body,-link_id, -parent_id))
-
-n_posts_subreddits <- nrow(df_subreddits) 
-
+  ) |>
+  # Remove comment-specific columns (not relevant for submissions)
+  select(-c(body, link_id, parent_id))
 ```
 
-Data were retrieved from the reddit Pushshift archive, distributed via Academic Torrents. Pushshift has collected nearly all publicly available Reddit submissions and comments since 2005 and continues to release monthly archival dumps (Academic Torrents, 2025). Although Reddit revoked Pushshift’s real-time API access in 2023, the archival dumps remain continuously updated. We conducted a query for posts containing the words myopath, myositis, synthetase syndrome, and anti-Jo-1 in either the title or the self-text field (the fields that contain the title and the main body of a submission). The search allowed for different variations of these terms (e.g., myopathies, myopathy, dermatomyositis, antijo1, etc.) up to August 1, 2025, while excluding posts containing the word cardiomyopathy. Comments (both to submissions and to other comments) were excluded, as they are less likely to contain patient experiences or to be written with the intent to share a story, seek advice, or narrate symptoms. Submissions are also typically more self-contained: their content can be interpreted without additional conversational context.
+---
+
+## Data Source Summary
+
+Data were retrieved from the Reddit Pushshift archive, distributed via Academic Torrents. Pushshift has collected nearly all publicly available Reddit submissions and comments since 2005 and continues to release monthly archival dumps (Academic Torrents, 2025). Although Reddit revoked Pushshift's real-time API access in 2023, the archival dumps remain continuously updated. We conducted a query for posts containing the words myopath, myositis, synthetase syndrome, and anti-Jo-1 in either the title or the self-text field (the fields that contain the title and the main body of a submission). The search allowed for different variations of these terms (e.g., myopathies, myopathy, dermatomyositis, antijo1, etc.) up to August 1, 2025, while excluding posts containing the word cardiomyopathy. Comments (both to submissions and to other comments) were excluded, as they are less likely to contain patient experiences or to be written with the intent to share a story, seek advice, or narrate symptoms. Submissions are also typically more self-contained: their content can be interpreted without additional conversational context.
 
 The query was deliberately broad, with the resulting data subsequently refined through several cleaning steps. The query was case-insensitive and returned `r scales::comma(nrow(df_query))` posts, including those mentioning myositis and myopath either as standalone words or as parts of longer words (e.g., dermatomyositis, myopathy, myopathies). In addition, we included all submissions (`r n_posts_subreddits`) from three myositis-related subreddits: r/dermatomyositis, r/polymyositis, and r/myositis. In total, the dataset comprised `r scales::comma(nrow(df))` posts published between July 2008 and July 31, 2025.
 
+---
+
+## 5. Text Preprocessing
+
+Merge title and selftext into a single text field, with proper punctuation handling.
+
 ```{r}
 #| message: false
-#| label: trim and merge all text columns; adding a dot after the title
+#| label: preprocess-text
 
-#rm(list = setdiff(ls(), "df"))
+# -----------------------------------------------------------------------------
+# TEXT PREPROCESSING: Merge title + selftext
+# -----------------------------------------------------------------------------
 
 df <- df |>
   mutate(
+    # Trim whitespace from text fields
     selftext = str_trim(selftext),
-    title    = str_trim(title),
+    title = str_trim(title),
 
-    # Determine whether title ends with punctuation: . ? ! :
+    # Check if title already ends with terminal punctuation
     title_punctuated = str_detect(title, "[\\.\\?\\!\\:]$"),
 
-    # Add ". " only if:
-    #  - title is not NA/empty
-    #  - AND it does not already end with punctuation
+    # Prepare title for merging:
+    # - Add ". " if title doesn't end with punctuation
+    # - Add " " only if it already has punctuation
+    # - Handle NA/empty titles
     title_clean = case_when(
       is.na(title) | title == "" ~ "",
-      title_punctuated ~ paste0(title, " "),        # ends with punctuation → add space only
-      TRUE ~ paste0(title, ". ")                    # no punctuation → add ". "
+      title_punctuated ~ paste0(title, " "),
+      TRUE ~ paste0(title, ". ")
     ),
 
-    # Merge title + selftext
+    # Merge title and selftext into single text field
     text = paste0(title_clean, selftext),
 
-    # Cleanup
-    text = gsub("^NA\\.\\s*", "", text),
-    text = gsub("NA", "", text),
-    text = tolower(text),
-    text = str_replace_all(text, "[-_]", " ")
+    # Clean up merged text
+    text = gsub("^NA\\.\\s*", "", text),  # Remove leading "NA. "
+    text = gsub("NA", "", text),           # Remove stray "NA"
+    text = tolower(text),                  # Lowercase for consistency
+    text = str_replace_all(text, "[-_]", " ")  # Normalize hyphens/underscores
   ) |>
+  # Remove temporary columns
   select(-title_punctuated, -title_clean) |>
+  # Reorder columns: put key fields first
   select(author, created_utc, text, everything())
-
 ```
+
+---
+
+## 6. Extract Query Keywords
+
+Identify which search keywords matched in each post for transparency and analysis.
 
 ```{r}
 #| message: false
-#| label: establishing which query keyword
+#| label: extract-keywords
 
-# Define your keywords
+# -----------------------------------------------------------------------------
+# KEYWORD EXTRACTION
+# -----------------------------------------------------------------------------
+# Track which query keywords matched in each post
+
+# Define search keywords (same as used in parquet query)
 keywords <- c(
-  "myopath", "myositis", "synthetase syndrome", "synthetasesyndrome", "anti-jo-1", "antijo1", "anti jo 1"
+  "myopath", "myositis", "synthetase syndrome", "synthetasesyndrome",
+  "anti-jo-1", "antijo1", "anti jo 1"
 )
 
-# Create a single regex pattern for case-insensitive matching
+# Create regex pattern for matching
 pattern <- str_c(keywords, collapse = "|")
 
-# Extract matched keywords from the combined text column
+# Extract all matching keywords from each post
 df <- df |>
   mutate(
     keywords_found_list = str_extract_all(text, regex(pattern, ignore_case = TRUE)),
@@ -163,16 +281,15 @@ df <- df |>
   ) |>
   select(-keywords_found_list)
 
-# Define replacements
+# Normalize keyword variations in text
 replacements <- c(
   "anti jo 1" = "anti-jo-1",
-  "antijo1"   = "anti-jo-1")
-
-# Apply replacements
-df <- df |> 
+  "antijo1" = "anti-jo-1"
+)
+df <- df |>
   mutate(text = str_replace_all(text, replacements))
 
-#remove different outcomes based on the order of keywords
+# Re-extract keywords after normalization (sorted for consistency)
 df <- df |>
   mutate(
     keywords_found_list = str_extract_all(text, regex(pattern, ignore_case = TRUE)),
@@ -187,58 +304,88 @@ df <- df |>
   ) |>
   select(-keywords_found_list)
 
+# Summary table of keyword combinations (for reference)
 keyw <- as.data.frame(table(df$keywords_found)) |>
   arrange(desc(Freq))
 ```
 
+---
+
+## 7. Generate Post URLs
+
+Create direct links to each Reddit post for easy reference and verification.
+
 ```{r}
 #| message: false
-#| label: create post url
+#| label: create-post-urls
+
+# -----------------------------------------------------------------------------
+# GENERATE POST URLS
+# -----------------------------------------------------------------------------
 
 df <- df |>
   mutate(
-    post_url = paste0(
-      "https://www.reddit.com/comments/",
-      id
-    )
+    post_url = paste0("https://www.reddit.com/comments/", id)
   )
-
 ```
+
+---
+
+## 8. Author Anonymization
+
+Anonymize author usernames using CRC32 hashing to protect privacy while maintaining the ability to track unique authors.
 
 ```{r}
 #| message: false
-#| label: create anonymous user accounts
+#| label: anonymize-authors
 
+# -----------------------------------------------------------------------------
+# ANONYMIZE AUTHOR USERNAMES
+# -----------------------------------------------------------------------------
+
+# Calculate word and token counts for each post
 df <- df |>
   mutate(
     n_words = str_count(text, "\\w+"),
-    n_tokens = ntoken(tokens(text)),
+    n_tokens = ntoken(tokens(text))
   )
 
-#anonymize authors
-df$author_ano <- anonymizer::anonymize(df$author, 
-                                         .algo = "crc32", .seed = 0, 
-                                         .chars = letters,
-                                         .n_chars = 5L)
-df <-df |> #rename deleted author names
-  mutate(author_ano = str_replace(author_ano, "3c0a4086", "deleted")) 
+# Anonymize author names using CRC32 hash
+# Same author always gets same anonymous ID (reproducible with seed)
+df$author_ano <- anonymizer::anonymize(
+  df$author,
+  .algo = "crc32",
+  .seed = 0,
+  .chars = letters,
+  .n_chars = 5L
+)
 
+# Replace the hash for "[deleted]" authors with readable label
 df <- df |>
-  select(source, subreddit, created_utc, text, everything()) 
+  mutate(author_ano = str_replace(author_ano, "3c0a4086", "deleted"))
 
+# Reorder columns
+df <- df |>
+  select(source, subreddit, created_utc, text, everything())
 ```
 
+---
+
+## 9. Classify Post Types
+
+Determine whether each entry is a submission, comment, or comment-to-comment based on the parent_id field.
+
 ```{r}
 #| message: false
-#| label: determine post type
+#| label: classify-post-types
 
+# -----------------------------------------------------------------------------
+# CLASSIFY POST TYPES
+# -----------------------------------------------------------------------------
+# Reddit uses prefixes to identify content types:
+#   t3_ = submission (link/self post)
+#   t1_ = comment
 
-
-```{r}
-#| message: false
-#| label: create post type column
-
-# Create post_type column to distinguish submissions, comments, and comments to comments
 df <- df |>
   mutate(
     post_type = case_when(
@@ -249,19 +396,40 @@ df <- df |>
     )
   )
 
-# Show distribution of post types
+# Display distribution of post types
 post_type_counts <- df |>
   count(post_type, sort = TRUE) |>
-  mutate(
-    percentage = scales::percent(n / sum(n), accuracy = 0.1)
-  )
+  mutate(percentage = scales::percent(n / sum(n), accuracy = 0.1))
 
 print(post_type_counts)
-
-write_feather(df, file.path(DATA_PATH, "data", "myositis_submissions_incl_subreddits_2005_july2025.feather"))
-
 ```
 
+---
 
+## 10. Save Output
 
+Export the merged and cleaned dataset to feather format for efficient loading in subsequent analysis scripts.
 
+```{r}
+#| message: false
+#| label: save-output
+
+# -----------------------------------------------------------------------------
+# SAVE PROCESSED DATA
+# -----------------------------------------------------------------------------
+
+output_path <- file.path(DATA_PATH, "data", "myositis_submissions_incl_subreddits_2005_july2025.feather")
+write_feather(df, output_path)
+
+message(sprintf("Saved %s rows to: %s", scales::comma(nrow(df)), output_path))
+```
+
+---
+
+## Output Summary
+
+- **Total posts**: `r scales::comma(nrow(df))`
+- **From Pushshift query**: `r scales::comma(nrow(df_query))`
+- **From subreddit archives**: `r scales::comma(n_posts_subreddits)`
+- **Date range**: `r min(df$date)` to `r max(df$date)`
+- **Output file**: `DATA_PATH/data/myositis_submissions_incl_subreddits_2005_july2025.feather`
