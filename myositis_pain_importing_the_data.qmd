@@ -1,5 +1,5 @@
 ---
-title: "Myositis & Pain: Data Import Pipeline"
+title: "Myositis and Pain: Data Import Pipeline"
 subtitle: "Importing and merging Reddit data from Pushshift archives and subreddit dumps"
 author: "Peter Kerkhof"
 date: last-modified
@@ -20,12 +20,12 @@ always_allow_html: yes
 
 This script imports Reddit submission data from two sources:
 
-1. **Pushshift Parquet Archives** - Queried from Academic Torrents Reddit dumps
-2. **Subreddit JSONL Archives** - Downloaded from Arctic Shift for specific myositis subreddits
+1.  **Pushshift Parquet Archives** - Queried from Academic Torrents Reddit dumps
+2.  **Subreddit JSONL Archives** - Downloaded from Arctic Shift for specific myositis subreddits
 
 The data is merged, deduplicated, cleaned, and saved as a single feather file for downstream analysis.
 
----
+------------------------------------------------------------------------
 
 ## 1. Setup and Configuration
 
@@ -64,7 +64,7 @@ library(arrow)
 source(here("config.R"))
 ```
 
----
+------------------------------------------------------------------------
 
 ## 2. Import Pushshift Query Results
 
@@ -97,7 +97,7 @@ df_query <- read_feather(
   filter(as.numeric(created_utc) < cut_off_date)
 ```
 
----
+------------------------------------------------------------------------
 
 ## 3. Import Subreddit Archives
 
@@ -148,7 +148,8 @@ df_subreddits <- map_dfr(files, read_jsonl) |>
 n_posts_subreddits <- nrow(df_subreddits)
 ```
 
----
+------------------------------------------------------------------------
+
 ## 4. Merge and Deduplicate
 
 ```{r}
@@ -187,7 +188,7 @@ df <- bind_rows(df_query, df_subreddits) |>
   select(-c(body, link_id, parent_id))
 ```
 
----
+------------------------------------------------------------------------
 
 ## Data Source Summary
 
@@ -195,7 +196,7 @@ Data were retrieved from the Reddit Pushshift archive, distributed via Academic 
 
 The query was deliberately broad, with the resulting data subsequently refined through several cleaning steps. The query was case-insensitive and returned `r scales::comma(nrow(df_query))` posts, including those mentioning myositis and myopath either as standalone words or as parts of longer words (e.g., dermatomyositis, myopathy, myopathies). In addition, we included all submissions (`r n_posts_subreddits`) from three myositis-related subreddits: r/dermatomyositis, r/polymyositis, and r/myositis. In total, the dataset comprised `r scales::comma(nrow(df))` posts published between July 2008 and July 31, 2025.
 
----
+------------------------------------------------------------------------
 
 ## 5. Text Preprocessing
 
@@ -243,7 +244,7 @@ df <- df |>
   select(author, created_utc, text, everything())
 ```
 
----
+------------------------------------------------------------------------
 
 ## 6. Extract Query Keywords
 
@@ -309,7 +310,7 @@ keyw <- as.data.frame(table(df$keywords_found)) |>
   arrange(desc(Freq))
 ```
 
----
+------------------------------------------------------------------------
 
 ## 7. Generate Post URLs
 
@@ -329,7 +330,7 @@ df <- df |>
   )
 ```
 
----
+------------------------------------------------------------------------
 
 ## 8. Author Anonymization
 
@@ -347,8 +348,7 @@ Anonymize author usernames using CRC32 hashing to protect privacy while maintain
 df <- df |>
   mutate(
     n_words = str_count(text, "\\w+"),
-    n_tokens = ntoken(tokens(text))
-  )
+    n_tokens = quanteda::ntoken(quanteda::tokens(text))  )
 
 # Anonymize author names using CRC32 hash
 # Same author always gets same anonymous ID (reproducible with seed)
@@ -369,44 +369,9 @@ df <- df |>
   select(source, subreddit, created_utc, text, everything())
 ```
 
----
+------------------------------------------------------------------------
 
-## 9. Classify Post Types
-
-Determine whether each entry is a submission, comment, or comment-to-comment based on the parent_id field.
-
-```{r}
-#| message: false
-#| label: classify-post-types
-
-# -----------------------------------------------------------------------------
-# CLASSIFY POST TYPES
-# -----------------------------------------------------------------------------
-# Reddit uses prefixes to identify content types:
-#   t3_ = submission (link/self post)
-#   t1_ = comment
-
-df <- df |>
-  mutate(
-    post_type = case_when(
-      is.na(parent_id) | parent_id == "" ~ "submission",
-      str_starts(parent_id, "t3_") ~ "comment",
-      str_starts(parent_id, "t1_") ~ "comment_to_comment",
-      TRUE ~ "unknown"
-    )
-  )
-
-# Display distribution of post types
-post_type_counts <- df |>
-  count(post_type, sort = TRUE) |>
-  mutate(percentage = scales::percent(n / sum(n), accuracy = 0.1))
-
-print(post_type_counts)
-```
-
----
-
-## 10. Save Output
+## 9. Save Output
 
 Export the merged and cleaned dataset to feather format for efficient loading in subsequent analysis scripts.
 
@@ -419,17 +384,17 @@ Export the merged and cleaned dataset to feather format for efficient loading in
 # -----------------------------------------------------------------------------
 
 output_path <- file.path(DATA_PATH, "data", "myositis_submissions_incl_subreddits_2005_july2025.feather")
-write_feather(df, output_path)
+#write_feather(df, output_path)
 
 message(sprintf("Saved %s rows to: %s", scales::comma(nrow(df)), output_path))
 ```
 
----
+------------------------------------------------------------------------
 
 ## Output Summary
 
-- **Total posts**: `r scales::comma(nrow(df))`
-- **From Pushshift query**: `r scales::comma(nrow(df_query))`
-- **From subreddit archives**: `r scales::comma(n_posts_subreddits)`
-- **Date range**: `r min(df$date)` to `r max(df$date)`
-- **Output file**: `DATA_PATH/data/myositis_submissions_incl_subreddits_2005_july2025.feather`
+-   **Total posts**: `r scales::comma(nrow(df))`
+-   **From Pushshift query**: `r scales::comma(nrow(df_query))`
+-   **From subreddit archives**: `r scales::comma(n_posts_subreddits)`
+-   **Date range**: `r min(df$date)` to `r max(df$date)`
+-   **Output file**: `DATA_PATH/data/myositis_submissions_incl_subreddits_2005_july2025.feather`

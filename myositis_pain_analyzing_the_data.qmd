@@ -1,0 +1,1092 @@
+---
+title: "Myositis and Pain: Analysis Pipeline"
+subtitle: "Descriptive analyses, pain lexicon matching, and semantic network analysis"
+author: "Peter Kerkhof"
+date: last-modified
+format:
+  html: default
+  pdf:
+    documentclass: article
+    geometry: a4paper
+  docx: default
+editor: visual
+execute:
+  echo: false
+  warning: false
+  message: false
+editor_options:
+  chunk_output_type: inline
+always_allow_html: true
+---
+
+## Overview
+
+This script analyzes myositis-related Reddit posts to understand pain experiences. The analysis includes:
+
+1.  **Descriptive statistics** - Posts over time, subreddit composition
+2.  **Pain lexicon matching** - Using a validated pain lexicon plus custom terms
+3.  **Pain expression analysis** - Unigrams, bigrams, body regions
+4.  **Semantic network analysis** - Co-occurrence patterns and community detection
+
+## 1. Setup and Data Loading
+
+```{r}
+#| label: setup-environment
+#| message: false
+
+# -----------------------------------------------------------------------------
+# ENVIRONMENT SETUP
+# -----------------------------------------------------------------------------
+rm(list = ls()[!sapply(ls(), function(x) is.function(get(x)))])
+cat("\014")
+
+options(scipen = 999)  # Avoid scientific notation in tables/outputs
+```
+
+```{r}
+#| label: load-libraries
+#| message: false
+
+# -----------------------------------------------------------------------------
+# LOAD REQUIRED LIBRARIES
+# -----------------------------------------------------------------------------
+
+# Data manipulation
+library(tidyverse)
+library(purrr)
+library(forcats)
+library(lubridate)
+
+# Text analysis
+library(tidytext)
+library(SnowballC)
+library(textstem)
+library(widyr)
+library(udpipe)
+library(pluralize)
+
+# Network analysis
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(tidylo)
+
+# Visualization
+library(viridis)
+library(ggvenn)
+library(RColorBrewer)
+library(wordcloud)
+library(ggthemes)
+library(grid)
+
+# Tables and reporting
+library(gt)
+library(gtExtras)
+library(knitr)
+library(glue)
+library(scales)
+library(htmltools)
+
+# File I/O
+library(here)
+library(arrow)
+library(googlesheets4)
+
+# Load project configuration (DATA_PATH)
+source(here("config.R"))
+```
+
+```{r}
+#| label: load-data
+#| message: false
+
+# -----------------------------------------------------------------------------
+# LOAD CLASSIFIED DATA
+# -----------------------------------------------------------------------------
+# This dataset contains posts classified as "Yes" (author refers to own myositis)
+# by GPT-5.1 majority vote, after near-duplicate removal.
+
+df <- arrow::read_feather(
+  file.path(DATA_PATH, "LLM output", "majority_vote_gpt51_20251210_181138.feather")
+)
+
+cat("Loaded", scales::comma(nrow(df)), "posts\n")
+cat("Date range:", min(df$date), "to", max(df$date), "\n")
+cat("Unique authors:", scales::comma(length(unique(df$author))), "\n")
+cat("Unique subreddits:", scales::comma(length(unique(df$subreddit))), "\n")
+```
+
+```{r}
+#| label: helper-functions
+#| message: false
+
+# -----------------------------------------------------------------------------
+# HELPER FUNCTIONS
+# -----------------------------------------------------------------------------
+
+#' Create a percentage table for a categorical variable
+#'
+#' @param data Data frame
+#' @param var_name Column name (string)
+#' @return GT table with counts and percentages
+
+perc_table <- function(data, var_name) {
+  data |>
+    count(.data[[var_name]], name = "n") |>
+    mutate(
+      percentage = round(n / sum(n) * 100, 1),
+      cum_percentage = round(cumsum(percentage), 1)
+    ) |>
+    arrange(desc(n)) |>
+    gt() |>
+    fmt_number(columns = n, decimals = 0) |>
+    tab_header(title = paste("Distribution of", var_name))
+}
+```
+
+## 2. Descriptive Statistics Over Time
+
+```{r}
+#| label: posts-per-month
+#| message: false
+
+# -----------------------------------------------------------------------------
+# POSTS PER MONTH
+# -----------------------------------------------------------------------------
+
+df_summary <- df |>
+  mutate(year_month = floor_date(as.Date(created_utc), "month")) |>
+  group_by(year_month) |>
+  summarise(count = n(), .groups = "drop")
+
+ggplot(df_summary, aes(x = year_month, y = count)) +
+  geom_point() +
+  geom_line(alpha = 0.3) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  labs(
+    title = "Myositis-Related Posts per Month",
+    subtitle = "Posts where author refers to their own myositis diagnosis",
+    x = "Year",
+    y = "Number of Posts"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#| label: subreddit-composition
+#| message: false
+
+# -----------------------------------------------------------------------------
+# SUBREDDIT COMPOSITION OVER TIME
+# -----------------------------------------------------------------------------
+
+top_n_subreddits <- 7  # Show top N; others lumped into "Other"
+
+df_plot <- df |>
+  mutate(
+    year = as.integer(year),
+    subreddit = fct_lump_n(subreddit, n = top_n_subreddits, other_level = "Other")
+  ) |>
+  count(year, subreddit, name = "n_posts")
+
+ggplot(df_plot, aes(x = year, y = n_posts, fill = subreddit)) +
+  geom_area(position = "fill") +
+  scale_y_continuous(labels = percent) +
+  labs(
+    x = "Year",
+    y = "Proportion of Posts",
+    fill = "Subreddit",
+    title = "Subreddit Composition of Myositis Posts Over Time"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+#| label: descriptive-stats
+#| message: false
+
+# -----------------------------------------------------------------------------
+# SUMMARY STATISTICS
+# -----------------------------------------------------------------------------
+
+# Recent activity (2025)
+df_recent_years <- df |>
+  filter(year == 2025) |>
+  count(month, name = "n_posts")
+
+mean_posts_per_month_2025 <- mean(df_recent_years$n_posts)
+
+# Store key counts for reporting
+n_posts <- nrow(df)
+n_unique_authors <- length(unique(df$author))
+n_unique_subreddits <- length(unique(df$subreddit))
+
+# Display tables
+perc_table(df, "year")
+perc_table(df, "subreddit")
+```
+
+**Dataset Summary:**
+
+-   Total posts: `r scales::comma(n_posts)`
+-   Unique authors: `r scales::comma(n_unique_authors)`
+-   Unique subreddits: `r scales::comma(n_unique_subreddits)`
+-   Average posts per month (2025): `r round(mean_posts_per_month_2025, 1)`
+
+## 3. Pain Lexicon Preparation
+
+```{r}
+#| label: load-pain-lexicon
+#| message: false
+
+# -----------------------------------------------------------------------------
+# LOAD PAIN LEXICON
+# -----------------------------------------------------------------------------
+# Source: Chaturvedi, J., Mascio, A., Velupillai, S. U., & Roberts, A. (2021).
+# Development of a Lexicon for Pain. Front Digit Health, 3, 778305.
+
+# Clean up temporary objects
+rm(df_plot, df_summary)
+
+# Read from public Google Sheet (read-only, no auth required)
+gs4_deauth()
+sheet_url <- "https://docs.google.com/spreadsheets/d/1z-6619UBdvwWrB9Sz4b1rbjDzuslOGCpts2DNc0naCc/edit?gid=761302369#gid=761302369"
+
+pain_lexicon_original <- read_sheet(sheet_url) |>
+  select(word = `keywords-clean`, num_words = `count of words`) |>
+  mutate(
+    word = str_squish(tolower(as.character(word))),
+    num_words = as.integer(num_words)
+  ) |>
+  filter(!word %in% c("p ain", "p ainful", "p ains"))  # Remove OCR errors
+```
+
+```{r}
+#| label: custom-pain-terms
+#| message: false
+
+# -----------------------------------------------------------------------------
+# ADD CUSTOM PAIN TERMS
+# -----------------------------------------------------------------------------
+# Project-specific additions to capture myositis-relevant pain expressions
+
+custom_pain_keywords <- c(
+  # Pain intensity phrases
+  "extreme pain", "constant pain", "severe pain", "sharp pain", "achy pain",
+  "terrible pain", "intense pain", "worst pain", "unusual pain", "horrible pain",
+  "weird pain", "dull pain", "mild pain", "persistent pain", "significant pain",
+  "unbearable pain", "excruciating pain", "searing pain", "intolerable pain",
+  "piercing pain", "burning pain", "throbbing pain", "stabbing pain",
+  "shooting pain", "debilitating pain",
+
+  # Sensation descriptors
+  "electric shock", "pins and needles", "burning sensation", "feels bruised",
+  "limited mobility", "morning stiffness",
+
+  # Single-word pain terms
+  "sore", "hurt", "hurting", "discomfort", "burning", "throbbing", "stabbing",
+  "shooting", "inflammation", "inflamed", "stiffness", "tender", "spasm",
+  "migraine", "flare", "flares", "flare-up", "flareup", "agony", "unbearable",
+  "excruciating", "debilitating", "torture", "torment", "intolerable",
+  "suffering", "searing", "piercing", "twinge", "neuropathy", "neuropathic",
+  "tingling", "numbness", "zapping", "hypersensitive", "locking", "tightness",
+  "tenderness", "allodynia", "hyperalgesia"
+)
+
+pain_lexicon_custom <- tibble(word = custom_pain_keywords) |>
+  mutate(
+    word = str_squish(tolower(word)),
+    num_words = str_count(word, "\\s+") + 1L
+  )
+
+# Combine original and custom lexicons
+pain_lexicon_raw <- bind_rows(pain_lexicon_original, pain_lexicon_custom) |>
+  filter(!is.na(word), word != "", !is.na(num_words)) |>
+  distinct(word, .keep_all = TRUE)
+
+rm(pain_lexicon_original, pain_lexicon_custom)
+
+cat("Pain lexicon size:", nrow(pain_lexicon_raw), "terms\n")
+cat("  Unigrams:", sum(pain_lexicon_raw$num_words == 1), "\n")
+cat("  Bigrams+:", sum(pain_lexicon_raw$num_words > 1), "\n")
+```
+
+```{r}
+#| label: lemmatize-pain-lexicon
+#| message: false
+
+# -----------------------------------------------------------------------------
+# LEMMATIZE PAIN LEXICON
+# -----------------------------------------------------------------------------
+# Use udpipe to normalize pain terms to their lemma forms
+
+model <- udpipe_load_model("english-ewt-ud-2.5-191206.udpipe")
+
+# Extract unigrams only (bigrams handled separately)
+raw_pain_words <- pain_lexicon_raw |>
+  filter(num_words == 1) |>
+  mutate(word = str_squish(str_to_lower(word))) |>
+  distinct() |>
+  pull(word)
+```
+
+```{r}
+#| label: define-term-normalization
+#| message: false
+
+# -----------------------------------------------------------------------------
+# DOMAIN-SPECIFIC TERM NORMALIZATION
+# -----------------------------------------------------------------------------
+# Manual corrections for lemmatization errors and domain-specific groupings
+
+clean_myositis_terms <- function(v) {
+  case_when(
+    # Ache grouping
+    v %in% c("ach", "achiness", "achyness", "ache") ~ "ache",
+    v == "earach"   ~ "earache",
+    v == "headach"  ~ "headache",
+    v == "neckach"  ~ "neckache",
+
+    # Medical terminology normalization
+    v %in% c("cephalodynia", "cephalodynias") ~ "cephalodynia",
+    v == "dysesthesia" ~ "dysaesthesia",
+    v == "neuropathic" ~ "neuropathy",
+    v %in% c("inflamed", "inflam", "inflammatory") ~ "inflammation",
+    v == "cephalalgia" ~ "cephalodynia",
+    v == "anti synthetase" ~ "antisynthetase",
+
+    # Tailbone-related terms
+    v %in% c("coccyalgia", "coccygalgia", "coccygodynia",
+             "coccyodynia", "coccyxdynia") ~ "coccydynia",
+
+    # Flare handling
+    v %in% c("flareup", "flare-up", "flare", "up", "-") ~ "flare",
+
+    # Pain descriptors (prefer adjective/present participle forms)
+    v %in% c("hurting", "hurts") ~ "hurt",
+    v == "burn"      ~ "burning",
+    v == "throbb"    ~ "throbbing",
+    v == "stab"      ~ "stabbing",
+    v == "shoot"     ~ "shooting",
+    v == "excruciat" ~ "excruciating",
+    v == "debilitat" ~ "debilitating",
+    v == "sear"      ~ "searing",
+    v == "lock"      ~ "locking",
+    v == "soreness"  ~ "sore",
+    v == "weak"      ~ "weakness",
+
+    # Default: keep as-is
+    TRUE ~ v
+  )
+}
+
+# Apply lemmatization and normalization to pain lexicon
+pain_lexicon_lemmatized <- udpipe_annotate(model, x = raw_pain_words) |>
+  as.data.frame() |>
+  mutate(lemma = clean_myositis_terms(lemma))
+
+# Tokenize post text and apply same normalization
+tokens_normalized <- df |>
+  select(doc_id, text = lemmatized_text) |>
+  unnest_tokens(word, text) |>
+  mutate(word = clean_myositis_terms(word))
+
+rm(model)
+```
+
+## 4. Pain Mentions Analysis
+
+```{r}
+#| label: pain-unigram-counts
+#| message: false
+
+# -----------------------------------------------------------------------------
+# COUNT PAIN TERM OCCURRENCES
+# -----------------------------------------------------------------------------
+
+# Create lookup table of lemmatized pain terms
+unigram_lexicon_lemmatized <- pain_lexicon_lemmatized |>
+  distinct(lemma) |>
+  rename(word = lemma)
+
+# Count pain term occurrences in original text
+unigram_counts_lemmatized <- df |>
+  select(doc_id, text) |>
+  unnest_tokens(word, text, token = "words") |>
+  mutate(word = str_squish(tolower(word))) |>
+  inner_join(unigram_lexicon_lemmatized, by = "word") |>
+  count(word, sort = TRUE)
+
+# Match pain terms in normalized tokens
+all_pain_matches <- tokens_normalized |>
+  inner_join(unigram_lexicon_lemmatized, by = "word") |>
+  select(doc_id, word)
+```
+
+```{r}
+#| label: pain-per-post
+#| message: false
+
+# -----------------------------------------------------------------------------
+# CALCULATE PAIN STATISTICS PER POST
+# -----------------------------------------------------------------------------
+
+# Count pain tokens per post
+pain_stats_per_post <- all_pain_matches |>
+  group_by(doc_id) |>
+  summarise(n_pain_tokens = n(), .groups = "drop")
+
+# Join to main dataframe
+df <- df |>
+  left_join(pain_stats_per_post, by = "doc_id") |>
+  mutate(n_pain_tokens = replace_na(n_pain_tokens, 0))
+
+# Also count as n_pain_terms (for consistency)
+pain_counts_per_post <- all_pain_matches |>
+  count(doc_id, name = "n_pain_terms")
+
+df <- df |>
+  left_join(pain_counts_per_post, by = "doc_id") |>
+  mutate(n_pain_terms = replace_na(n_pain_terms, 0))
+
+# Create subset of posts with at least one pain term
+df_pain <- df |>
+  filter(n_pain_terms > 0)
+```
+
+```{r}
+#| label: pain-descriptives
+#| message: false
+
+# -----------------------------------------------------------------------------
+# PAIN DESCRIPTIVE STATISTICS
+# -----------------------------------------------------------------------------
+
+n_posts_with_pain      <- nrow(df_pain)
+prop_posts_with_pain   <- nrow(df_pain) / nrow(df)
+n_authors_with_pain    <- length(unique(df_pain$author))
+prop_authors_with_pain <- length(unique(df_pain$author)) / length(unique(df$author))
+n_pain_terms_total     <- sum(df_pain$n_pain_terms)
+```
+
+**Pain Mention Summary:**
+
+-   Posts with pain terms: `r scales::comma(n_posts_with_pain)` (`r round(prop_posts_with_pain * 100, 1)`%)
+-   Authors mentioning pain: `r scales::comma(n_authors_with_pain)` (`r round(prop_authors_with_pain * 100, 1)`%)
+-   Total pain term occurrences: `r scales::comma(n_pain_terms_total)`
+
+## 5. Pain Description Analysis
+
+```{r}
+#| label: pain-bigrams
+#| message: false
+
+# -----------------------------------------------------------------------------
+# EXTRACT PAIN BIGRAMS
+# -----------------------------------------------------------------------------
+# Identify phrases like "severe pain", "chronic pain", etc.
+
+# Define pain descriptor words (for classifying bigrams)
+pain_descriptors <- c(
+  "chronic", "extreme", "constant", "severe", "sharp", "burning", "bad", "achy",
+  "terrible", "intense", "excruciating", "worst", "aching", "cramping", "unusual",
+  "stabbing", "debilitating", "horrible", "phantom", "weird", "dull", "mild",
+  "persistent", "significant", "shooting", "acute", "moderate", "radiating",
+  "squeezing", "unbearable", "agonizing", "deep", "heavy", "hot", "intermittent",
+  "migratory", "miserable", "searing", "superficial", "throbbing", "tingling",
+  "transient", "much", "extremely", "agonizingly", "crawling", "disabling",
+  "excruciatingly", "horribly", "incredibly", "more", "most", "less", "pure",
+  "random", "severely", "seething", "strange", "super", "unrelenting"
+)
+
+# Extract bigrams ending in "pain" or "painful"
+pain_bigrams <- df |>
+  select(doc_id, text) |>
+  mutate(text = str_replace_all(text, "['']", "")) |>
+  mutate(
+    bigram = str_extract_all(
+      text,
+      regex("\\b(\\w+)\\s+(pain|painful)\\b", ignore_case = TRUE)
+    )
+  ) |>
+  unnest(bigram) |>
+  separate(bigram, into = c("word1", "word2"), sep = "\\s+") |>
+  mutate(
+    word1 = str_to_lower(word1),
+    word2 = str_to_lower(word2)
+  ) |>
+  filter(!is.na(word1), !is.na(word2)) |>
+  select(doc_id, word1, word2)
+
+# Remove stopwords but keep meaningful terms
+keep_words <- c("back", "face", "little", "less", "much", "more", "most", "serious")
+
+pain_bigrams <- pain_bigrams |>
+  filter(!word1 %in% stop_words$word | word1 %in% keep_words) |>
+  count(word1, word2, sort = TRUE) |>
+  mutate(
+    category = if_else(word1 %in% pain_descriptors, "pain_experience", "other")
+  )
+
+# Extract pain experience bigrams
+bigram_experience_counts <- pain_bigrams |>
+  filter(category == "pain_experience") |>
+  unite("bigram", word1, word2, sep = " ") |>
+  select(bigram, n) |>
+  arrange(desc(n))
+```
+
+```{r}
+#| label: pain-tables
+#| message: false
+
+# -----------------------------------------------------------------------------
+# TOP PAIN TERMS AND BIGRAMS TABLE
+# -----------------------------------------------------------------------------
+
+top_n_terms   <- 15
+top_n_bigrams <- 15
+
+# Top unigrams with percentages
+top_terms <- unigram_counts_lemmatized |>
+  slice_max(n, n = top_n_terms, with_ties = FALSE) |>
+  arrange(desc(n)) |>
+  mutate(
+    rel = (n / sum(unigram_counts_lemmatized$n)) * 100,
+    cum = cumsum(rel)
+  ) |>
+  transmute(
+    term = word,
+    term_n = n,
+    term_rel = round(rel, 1),
+    term_cum = round(cum, 1),
+    row = row_number()
+  )
+
+# Top bigrams with percentages
+top_bigrams <- bigram_experience_counts |>
+  slice_max(n, n = top_n_bigrams, with_ties = FALSE) |>
+  arrange(desc(n)) |>
+  mutate(
+    rel = (n / sum(bigram_experience_counts$n)) * 100,
+    cum = cumsum(rel)
+  ) |>
+  transmute(
+    bigram = bigram,
+    bigram_n = n,
+    bigram_rel = round(rel, 1),
+    bigram_cum = round(cum, 1),
+    row = row_number()
+  )
+
+# Combine into side-by-side table
+top_side_by_side <- full_join(top_terms, top_bigrams, by = "row") |>
+  arrange(row) |>
+  select(-row)
+
+# Create GT table
+top_side_by_side |>
+  gt() |>
+  tab_header(
+    title = "Top Pain-Related Terms and Pain-Experience Bigrams",
+    subtitle = "Identified in myositis-related Reddit posts"
+  ) |>
+  cols_label(
+    term = "Pain Term (Unigram)",
+    term_n = "n",
+    term_rel = "Rel. (%)",
+    term_cum = "Cum. (%)",
+    bigram = "Pain-Experience Bigram",
+    bigram_n = "n",
+    bigram_rel = "Rel. (%)",
+    bigram_cum = "Cum. (%)"
+  ) |>
+  fmt_number(columns = c(term_n, bigram_n), decimals = 0) |>
+  fmt_number(columns = c(term_rel, term_cum, bigram_rel, bigram_cum), decimals = 1) |>
+  cols_align(align = "left", columns = c(term, bigram)) |>
+  cols_align(align = "right", columns = c(term_n, term_rel, term_cum, bigram_n, bigram_rel, bigram_cum)) |>
+  tab_source_note(
+    source_note = md(
+      "n = total occurrences across all posts. Percentages computed within category.<br>
+       Bigrams restricted to phrases ending in 'pain'; classified as pain-experience when first word is a descriptor (e.g., severe, burning)."
+    )
+  )
+```
+
+## 6. Body Regions in Pain Posts
+
+```{r}
+#| label: body-regions
+#| message: false
+
+# -----------------------------------------------------------------------------
+# BODY REGION MENTIONS IN PAIN POSTS
+# -----------------------------------------------------------------------------
+
+# Define body parts vocabulary
+body_parts_singular <- c(
+  "head", "face", "forehead", "eye", "eyelid", "eyebrow", "eyelash", "ear",
+  "nose", "nostril", "mouth", "lip", "tongue", "tooth", "gum", "chin", "cheek",
+  "jaw", "scalp", "temple", "neck", "throat", "larynx", "adam's apple",
+  "shoulder", "arm", "elbow", "forearm", "wrist", "hand", "finger", "thumb",
+  "palm", "knuckle", "nail", "chest", "breast", "rib", "abdomen", "stomach",
+  "navel", "waist", "back", "spine", "hip", "pelvis", "leg", "thigh", "knee",
+  "calf", "shin", "ankle", "foot", "heel", "toe", "sole", "heart", "lung",
+  "liver", "kidney", "brain", "bladder", "pancreas", "intestine", "colon",
+  "appendix", "spleen", "gallbladder", "joint", "bone", "muscle", "ligament",
+  "tendon", "skin", "hair", "blood vessel", "vein", "artery", "nerve",
+  "penis", "vagina"
+)
+
+# Expand to include plurals
+body_parts_expanded <- tibble(word = body_parts_singular) |>
+  mutate(plural = pluralize(word)) |>
+  pivot_longer(cols = everything(), values_to = "match_word") |>
+  distinct(match_word)
+
+# Count body part mentions in pain posts
+body_part_counts <- df_pain |>
+  unnest_tokens(output = word, input = lemmatized_text) |>
+  inner_join(body_parts_expanded, by = c("word" = "match_word")) |>
+  mutate(word = singularize(word)) |>  # Normalize to singular
+  count(word, sort = TRUE) |>
+  mutate(
+    relative_percentage = round((n / sum(n)) * 100, 1),
+    cumulative_percentage = round(cumsum(relative_percentage), 1)
+  )
+
+# Display top 20
+body_part_counts |>
+  slice_max(order_by = n, n = 20) |>
+  gt() |>
+  tab_header(
+    title = md("**Top 20 Body Regions in Pain-Related Myositis Posts**")
+  ) |>
+  cols_label(
+    word = "Body Region",
+    n = "n",
+    relative_percentage = "Rel. (%)",
+    cumulative_percentage = "Cum. (%)"
+  ) |>
+  fmt_number(columns = n, decimals = 0) |>
+  tab_source_note(
+    source_note = md(
+      "n = total occurrences in posts with at least one pain term.<br>
+       Percentages indicate proportion of all body-region mentions."
+    )
+  )
+```
+
+```{r}
+#| label: body-region-stats
+#| message: false
+
+# Count posts mentioning any body part
+posts_with_bodypart <- df_pain |>
+  unnest_tokens(output = word, input = lemmatized_text) |>
+  inner_join(tibble(word = body_parts_singular), by = "word") |>
+  distinct(doc_id)
+
+n_posts_with_bodypart <- nrow(posts_with_bodypart)
+prop_posts_with_bodypart <- n_posts_with_bodypart / nrow(df_pain)
+```
+
+**Body Region Summary:**
+
+-   Pain posts mentioning body regions: `r scales::comma(n_posts_with_bodypart)` (`r round(prop_posts_with_bodypart * 100, 1)`%)
+
+## 7. Pain Centrality Score
+
+```{r}
+#| label: pain-centrality
+#| message: false
+
+# -----------------------------------------------------------------------------
+# CALCULATE PAIN CENTRALITY SCORE
+# -----------------------------------------------------------------------------
+# Combines pain density (frequency) with pain diversity (unique terms)
+# Formula: pain_centrality = pain_density * log1p(pain_diversity)
+
+# Remove old n_tokens if exists
+if ("n_tokens" %in% names(df_pain)) {
+  df_pain <- df_pain |> select(-n_tokens)
+}
+
+# Calculate post length in tokens
+post_len <- tokens_normalized |>
+  count(doc_id, name = "n_tokens")
+
+# Calculate pain matches per post
+pain_per_post <- tokens_normalized |>
+  inner_join(unigram_lexicon_lemmatized, by = "word") |>
+  group_by(doc_id) |>
+  summarise(
+    n_pain_occurrences = n(),
+    n_pain_distinct = n_distinct(word),
+    .groups = "drop"
+  )
+
+# Join and compute metrics
+df_pain <- df_pain |>
+  left_join(post_len, by = "doc_id") |>
+  left_join(pain_per_post, by = "doc_id") |>
+  mutate(
+    n_tokens = coalesce(n_tokens, 0L),
+    n_pain_occurrences = coalesce(n_pain_occurrences, 0L),
+    n_pain_distinct = coalesce(n_pain_distinct, 0L),
+    # Pain density: proportion of tokens that are pain terms
+    pain_density = n_pain_occurrences / pmax(n_tokens, 1),
+    # Pain centrality: density weighted by diversity
+    pain_centrality = pain_density * log1p(n_pain_distinct)
+  ) |>
+  arrange(desc(pain_centrality))
+```
+
+**Pain Centrality Metrics:**
+
+-   **pain_density** = pain-term occurrences / total tokens
+-   **pain_diversity** = number of distinct pain terms used
+-   **pain_centrality** = pain_density \* log1p(pain_diversity)
+
+## 8. Semantic Network Analysis
+
+```{r}
+#| label: prepare-network
+#| message: false
+
+# -----------------------------------------------------------------------------
+# PREPARE SEMANTIC NETWORK
+# -----------------------------------------------------------------------------
+
+# Define stop words for network visualization
+# These are content words that are uninteresting for pain analysis
+custom_stop_words <- tibble(
+  word = c(
+    "time", "day", "week", "month", "year", "months", "days", "hour",
+    "lot", "bit", "post", "doctor", "doctors", "wait",
+    "diagnosed", "diagnosis", "symptoms", "disease", "body",
+    "people", "person", "issue", "issues", "result", "results",
+    "start", "started", "feel", "feeling", "bad", "worse",
+    "life", "happen", "normal", "live", "read", "symptom", "experience",
+    "diagnose", "medical", "notice", "health", "syndrome", "low", "include",
+    "deal", "level", "typical", "refuse", "leave"
+  )
+)
+
+# Pattern for anchoring disease terms
+disease_pattern <- "(myositis|antisynthetase|myopath)"
+
+# Select top 500 posts by pain centrality for network
+top_pain_docs <- df_pain |>
+  arrange(desc(pain_centrality)) |>
+  slice_head(n = 500)
+
+# Filter tokens for network analysis
+tokens_normalized_filtered <- tokens_normalized |>
+  semi_join(top_pain_docs |> select(doc_id), by = "doc_id") |>
+  anti_join(custom_stop_words, by = "word") |>
+  filter(
+    str_length(word) > 2,
+    !str_detect(word, "^[0-9]+$")
+  )
+
+# Calculate document frequencies
+term_doc_freq <- tokens_normalized_filtered |>
+  distinct(doc_id, word) |>
+  count(word, name = "df")
+
+# Calculate pairwise co-occurrence
+pairs <- tokens_normalized_filtered |>
+  distinct(doc_id, word) |>
+  widyr::pairwise_count(word, doc_id, sort = TRUE, upper = FALSE)
+
+# Calculate Jaccard similarity
+pairs_jaccard <- pairs |>
+  left_join(term_doc_freq, by = c("item1" = "word")) |>
+  rename(df1 = df) |>
+  left_join(term_doc_freq, by = c("item2" = "word")) |>
+  rename(df2 = df) |>
+  mutate(jaccard = n / (df1 + df2 - n))
+```
+
+```{r}
+#| label: build-network
+#| message: false
+
+# -----------------------------------------------------------------------------
+# BUILD AND VISUALIZE SEMANTIC NETWORK
+# -----------------------------------------------------------------------------
+
+# Network parameters
+min_jaccard   <- 0.14   # Minimum Jaccard similarity for edge
+min_node_n    <- 13     # Minimum document frequency for node
+max_node_n    <- 350    # Maximum document frequency for node
+label_min_n   <- 13     # Minimum df for label display
+degree_filter <- 1      # Minimum degree to keep node
+
+pain_terms <- unigram_lexicon_lemmatized$word
+
+# Filter edges: must involve pain term OR disease term
+pain_edges <- pairs_jaccard |>
+  filter(
+    item1 %in% pain_terms | item2 %in% pain_terms |
+    str_detect(item1, disease_pattern) | str_detect(item2, disease_pattern)
+  ) |>
+  filter(jaccard >= min_jaccard) |>
+  transmute(from = item1, to = item2, weight = jaccard)
+
+# Build node list
+pain_nodes <- tibble(name = unique(c(pain_edges$from, pain_edges$to))) |>
+  left_join(term_doc_freq, by = c("name" = "word")) |>
+  mutate(
+    df = replace_na(df, 0L),
+    is_pain_term = name %in% pain_terms
+  ) |>
+  filter(df >= min_node_n, df <= max_node_n)
+
+# Filter edges to only include nodes in node list
+pain_edges <- pain_edges |>
+  filter(from %in% pain_nodes$name & to %in% pain_nodes$name)
+
+# Build graph
+g <- tbl_graph(nodes = pain_nodes, edges = pain_edges, directed = FALSE) |>
+  activate(nodes) |>
+  mutate(deg = centrality_degree()) |>
+  filter(deg >= degree_filter)
+```
+
+```{r}
+#| label: plot-network
+#| message: false
+#| fig-width: 12
+#| fig-height: 8
+
+# -----------------------------------------------------------------------------
+# SEMANTIC NETWORK VISUALIZATION
+# -----------------------------------------------------------------------------
+
+set.seed(42)
+
+ggraph(g, layout = "stress") +
+  geom_edge_link(aes(width = weight), alpha = 0.3) +
+  geom_node_point(aes(color = df, shape = is_pain_term), size = 5) +
+  geom_node_text(
+    aes(label = name, filter = df >= label_min_n),
+    repel = TRUE, size = 3
+  ) +
+  scale_edge_width(range = c(0.2, 2.5)) +
+  scale_color_viridis_c(option = "C", direction = -1) +
+  scale_shape_manual(
+    name = "Term type",
+    values = c(`TRUE` = 17, `FALSE` = 16),
+    labels = c(`TRUE` = "Pain term", `FALSE` = "Non-pain term")
+  ) +
+  guides(
+    color = guide_colorbar(order = 1, barheight = unit(35, "mm")),
+    shape = guide_legend(order = 2, override.aes = list(color = "#E69F00")),
+    edge_width = guide_legend(order = 3)
+  ) +
+  labs(
+    title = "Pain- and Disease-Anchored Semantic Network",
+    subtitle = "Top 500 myositis posts by pain centrality",
+    caption = "Edges represent normalized co-occurrence (Jaccard similarity).",
+    edge_width = "Co-occurrence\nstrength",
+    color = "Posts with term"
+  ) +
+  theme_minimal(base_size = 12) +
+  coord_cartesian(clip = "off") +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    legend.box = "vertical",
+    plot.margin = margin(10, 10, 10, 10),
+    plot.title.position = "plot",
+    plot.caption = element_text(size = 9, color = "grey40", hjust = 0)
+  )
+
+cat("Network statistics:\n")
+cat("  Nodes:", gorder(g), "\n")
+cat("  Edges:", gsize(g), "\n")
+```
+
+## 9. Network Centrality Analysis
+
+```{r}
+#| label: centrality-measures
+#| message: false
+
+# -----------------------------------------------------------------------------
+# CENTRALITY MEASURES
+# -----------------------------------------------------------------------------
+
+centrality_stats <- g |>
+  activate(nodes) |>
+  mutate(
+    betweenness = centrality_betweenness(),
+    degree = centrality_degree()
+  ) |>
+  as_tibble() |>
+  arrange(desc(betweenness)) |>
+  slice_head(n = 10)
+
+centrality_table <- centrality_stats |>
+  mutate(
+    Type = if_else(is_pain_term, "Pain Term", "General/Clinical Term"),
+    betweenness = round(betweenness, 1)
+  ) |>
+  select(
+    Term = name,
+    Type,
+    `Betweenness Centrality` = betweenness,
+    `Degree (Connections)` = degree
+  )
+
+kable(centrality_table,
+      caption = "Top 10 Most Central Terms in the Myositis Pain Network")
+```
+
+## 10. Community Detection
+
+```{r}
+#| label: community-detection
+#| message: false
+
+# -----------------------------------------------------------------------------
+# COMMUNITY DETECTION (LOUVAIN ALGORITHM)
+# -----------------------------------------------------------------------------
+
+set.seed(123)
+gi <- as.igraph(g)
+comm <- cluster_louvain(g, weights = E(g)$weight)
+V(g)$community <- membership(comm)
+
+# Key descriptives
+n_communities <- length(unique(V(g)$community))
+Q_modularity <- modularity(comm)
+
+cat("Communities detected:", n_communities, "\n")
+cat("Modularity (Q):", round(Q_modularity, 3), "\n")
+```
+
+```{r}
+#| label: community-summary
+#| message: false
+
+# -----------------------------------------------------------------------------
+# COMMUNITY COMPOSITION SUMMARY
+# -----------------------------------------------------------------------------
+
+community_summary <- tibble(
+  term = V(g)$name,
+  community = V(g)$community,
+  is_pain = V(g)$is_pain_term,
+  df = V(g)$df
+) |>
+  group_by(community) |>
+  summarise(
+    n_terms = n(),
+    pain_terms = sum(is_pain, na.rm = TRUE),
+    non_pain_terms = sum(!is_pain, na.rm = TRUE),
+    pain_share = round(mean(is_pain, na.rm = TRUE), 2),
+    mean_df = round(mean(df, na.rm = TRUE), 1),
+    top_terms = paste(term[order(df, decreasing = TRUE)][1:min(7, n())],
+                      collapse = ", "),
+    .groups = "drop"
+  ) |>
+  arrange(desc(n_terms))
+
+print(community_summary)
+```
+
+```{r}
+#| label: community-test
+#| message: false
+
+# -----------------------------------------------------------------------------
+# STATISTICAL TEST: COMMUNITY COMPOSITION
+# -----------------------------------------------------------------------------
+# Test whether communities differ in pain vs non-pain term composition
+
+contingency <- table(
+  Community = V(g)$community,
+  PainTerm = V(g)$is_pain_term
+)
+
+# Use Fisher's exact test if expected counts are small
+chi <- suppressWarnings(chisq.test(contingency))
+if (any(chi$expected < 5)) {
+  test <- fisher.test(contingency)
+  test_name <- "Fisher's exact test"
+} else {
+  test <- chi
+  test_name <- "Chi-square test"
+}
+
+cat("\nCommunity composition test:", test_name, "\n")
+print(test)
+```
+
+```{r}
+#| label: community-plot
+#| message: false
+#| fig-width: 12
+#| fig-height: 8
+
+# -----------------------------------------------------------------------------
+# NETWORK COLORED BY COMMUNITY
+# -----------------------------------------------------------------------------
+
+ggraph(g, layout = "stress") +
+  geom_edge_link(aes(width = weight), alpha = 0.2) +
+  geom_node_point(aes(color = factor(community), shape = is_pain_term), size = 4) +
+  scale_edge_width(range = c(0.2, 2.5)) +
+  scale_shape_manual(
+    name = "Term type",
+    values = c(`TRUE` = 17, `FALSE` = 16),
+    labels = c(`TRUE` = "Pain term", `FALSE` = "Non-pain term")
+  ) +
+  labs(
+    title = "Semantic Network Communities",
+    subtitle = paste0("Communities: ", n_communities, " | Modularity: ", round(Q_modularity, 3)),
+    edge_width = "Co-occurrence strength",
+    color = "Community",
+    shape = "Term type"
+  ) +
+  theme_void()
+```
+
+```{r}
+#| label: permutation-test
+#| message: false
+
+# -----------------------------------------------------------------------------
+# PERMUTATION TEST: PAIN TERM DISTRIBUTION
+# -----------------------------------------------------------------------------
+# Test whether pain terms are clustered within communities more than expected
+
+set.seed(123)
+n_perm <- 1000
+pain_share_null <- numeric(n_perm)
+
+for (i in seq_len(n_perm)) {
+  shuffled <- sample(V(g)$is_pain_term)
+  pain_share_null[i] <- tapply(shuffled, V(g)$community, mean) |>
+    var(na.rm = TRUE)
+}
+
+observed_var <- tapply(V(g)$is_pain_term, V(g)$community, mean) |>
+  var(na.rm = TRUE)
+
+p_value_perm <- mean(pain_share_null >= observed_var)
+
+cat("Permutation test (n =", n_perm, "):\n")
+cat("  Observed variance in pain share:", round(observed_var, 4), "\n")
+cat("  P-value:", round(p_value_perm, 4), "\n")
+
+# Cross-tabulation
+cat("\nPain terms by community:\n")
+print(table(V(g)$community, V(g)$is_pain_term))
+```
