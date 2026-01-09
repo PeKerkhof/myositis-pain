@@ -11,15 +11,24 @@ and which scripts produce which outputs**.
 
 ### Data Configuration
 
-This project references external data stored outside the repository.
+This project references external data stored outside the repository in a centralized data hub.
 
 1. Copy `config_template.R` to `config.R`
-2. Edit `config.R` and update `REDDIT_DATA_PATH` to point to your reddit-data-hub location
+2. Edit `config.R` and update paths:
+   - `REDDIT_DATA_PATH` - path to your reddit-data-hub location
+   - `DATA_PATH` - path to `reddit-data-hub/projects/myositis-pain-data/`
 3. The `config.R` file is excluded from Git (contains local paths)
 
 ### Required Data Structure
 
-The reddit data hub should contain:
+The project data folder (`DATA_PATH`) should contain:
+```
+myositis-pain-data/
+├── data/                           # Cleaned data files (feather)
+└── LLM output/                     # LLM classification results
+```
+
+The reddit data hub (`REDDIT_DATA_PATH`) should contain:
 - `queries/query-output/` - Queries & Query results
 - `subreddits/data/myositis/` - Subreddit archives
 
@@ -62,7 +71,7 @@ This directory contains all scripts, processed data, and outputs used for analys
 - Description:
   Imports query results and subreddit archives and merges them into a single dataset.
 - Output:
-  data/myositis_submissions_incl_subreddits_2005_july2025.feather
+  DATA_PATH/data/myositis_submissions_incl_subreddits_2005_july2025.feather
 
 ---
 
@@ -73,7 +82,7 @@ This directory contains all scripts, processed data, and outputs used for analys
 - Description:
   Text cleaning and lemmatization.
 - Output:
-  data/myositis_submissions_2005_july2025_clean.feather
+  DATA_PATH/data/myositis_submissions_2005_july2025_clean.feather
 
 ---
 
@@ -91,7 +100,7 @@ This directory contains all scripts, processed data, and outputs used for analys
 - Description:
   Applies GPT-5.1 to the full cleaned dataset.
 - Output:
-  LLM Output/majority_vote_gpt51_20251210_181138.feather
+  DATA_PATH/LLM output/majority_vote_gpt51_20251210_181138.feather
 
 ---
 
