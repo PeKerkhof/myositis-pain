@@ -6,6 +6,66 @@ This repository contains all project-specific scripts, data files, and analyses 
 The README documents **where data come from, where intermediate files are stored,
 and which scripts produce which outputs**.
 
+---
+
+## Prerequisites
+
+### R Environment
+- **R version**: 4.0 or higher recommended
+- **RStudio**: Optional but recommended for running .qmd files
+
+### Required R Packages
+The following R packages are required to run the analysis scripts:
+
+**Data manipulation & I/O:**
+- tidyverse, arrow, feather, here, glue
+
+**Text processing & NLP:**
+- tidytext, udpipe, stringr, stringi, SnowballC, textstem, pluralize, cld2
+
+**LLM API & evaluation:**
+- httr2, jsonlite, caret
+
+**Near-duplicate detection:**
+- textreuse (MinHash/LSH algorithms)
+
+**Network analysis:**
+- igraph, tidygraph, ggraph, widyr
+
+**Visualization:**
+- ggplot2 (included in tidyverse), ggthemes, viridis, RColorBrewer, wordcloud, ggvenn
+
+**Utilities:**
+- lubridate, purrr, furrr, pbapply, scales, knitr, kableExtra, gt, gtExtras, htmltools, forcats, tidylo, grid, googlesheets4
+
+You can install all required packages using:
+```r
+install.packages(c("tidyverse", "arrow", "feather", "here", "glue", "tidytext",
+                   "udpipe", "stringr", "stringi", "SnowballC", "textstem",
+                   "pluralize", "cld2", "httr2", "jsonlite", "caret", "textreuse",
+                   "igraph", "tidygraph", "ggraph", "widyr", "ggthemes", "viridis",
+                   "RColorBrewer", "wordcloud", "ggvenn", "lubridate", "purrr",
+                   "furrr", "pbapply", "scales", "knitr", "kableExtra", "gt",
+                   "gtExtras", "htmltools", "forcats", "tidylo", "grid", "googlesheets4"))
+```
+
+### External Dependencies
+- **udpipe language model**: The project uses `english-ewt-ud-2.5-191206.udpipe` for lemmatization. Download from [udpipe models](https://ufal.mff.cuni.ff.cz/udpipe/models) if not present.
+
+### API Keys
+- **OpenAI API Key**: Required for LLM-based classification scripts (`myositis_pain_GPT5_mini-with_evaluation.R` and `myositis_pain_GPT5_all_data.R`)
+
+  Set the environment variable before running these scripts:
+  ```bash
+  export OPENAI_API_KEY="your-api-key-here"
+  ```
+
+  Or in R:
+  ```r
+  Sys.setenv(OPENAI_API_KEY = "your-api-key-here")
+  ```
+
+---
 
 ## Setup Instructions
 
@@ -145,3 +205,23 @@ Classifies posts to identify those where the author refers to their **own** myos
   - Section 10: Community detection (Louvain algorithm)
 - Outputs:
   - Myositis_Semantic_Network_HighRes.png
+
+---
+
+## Citation
+
+If you use this code or methodology in your research, please cite:
+
+**[Add your publication details here when available]**
+
+For now, you can cite this repository:
+```
+Kerkhof, P. (2025). Myositis & Pain: Analysis of pain expression in myositis-related
+Reddit posts. GitHub repository. https://github.com/PeKerkhof/myositis-pain
+```
+
+---
+
+## Contact
+
+For questions or collaboration inquiries, please [open an issue](https://github.com/PeKerkhof/myositis-pain/issues) or contact the repository owner.
