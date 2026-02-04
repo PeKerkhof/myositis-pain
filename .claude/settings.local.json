@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git restore:*)",
+      "Bash(grep:*)",
+      "Bash(du:*)",
+      "Bash(xargs:*)",
+      "Bash(git rev-list:*)",
+      "Bash(git count-objects:*)",
+      "Bash(command -v:*)",
+      "Bash(brew install:*)",
+      "Bash(pip3 install:*)",
+      "Bash(/Users/peterkerkhof/Library/Python/3.9/bin/git-filter-repo:*)",
+      "Bash(git remote add:*)",
+      "Bash(git cat-file:*)",
+      "Bash(sort:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}
