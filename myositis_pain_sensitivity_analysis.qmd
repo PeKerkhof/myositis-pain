@@ -1,5 +1,5 @@
 ---
-title: "Myositis and Pain: Analysis Pipeline"
+title: "Myositis and Pain: Analysis Pipeline (Sensitivity Analysis)"
 subtitle: "Descriptive analyses, pain lexicon matching, and semantic network analysis"
 author: "Peter Kerkhof"
 date: last-modified
@@ -260,7 +260,10 @@ pain_lexicon_original <- read_sheet(sheet_url) |>
     num_words = as.integer(num_words)
   ) |>
   filter(!word %in% c("p ain", "p ainful", "p ains")) |>  # Remove OCR errors
-  mutate(source = "Chaturvedi et al")
+  mutate(source = "Chaturvedi et al") |>
+  filter(word != "arthritis") 
+
+#Note: for sensitivity analysis arthritis was removed from pain_lexicon_original
 
 #writexl::write_xlsx(pain_lexicon_original, file.path(DATA_PATH, "pain_lexicons/pain_lexicon_original.xlsx"))
 ```
@@ -289,14 +292,19 @@ custom_pain_keywords <- c(
 
   # Single-word pain terms
   "sore", "hurt", "hurting", "discomfort", "burning", "throbbing", "stabbing",
-  "shooting", "inflammation", "inflamed", "stiffness", "tender", "spasm",
-  "migraine", "flare", "flares", "flare-up", "flareup", "agony", "unbearable",
+  "shooting", "stiffness", "tender", "spasm",
+  "migraine", "agony", "unbearable",
   "excruciating", "debilitating", "torture", "torment", "intolerable",
   "suffering", "searing", "piercing", "twinge", "neuropathy", "neuropathic",
   "tingling", "numbness", "zapping", "hypersensitive", "locking", "tightness",
   "tenderness", "allodynia", "hyperalgesia"
 )
 
+#Sensitivity Analysis: removed 
+#"inflammation", "inflamed", "flare", "flares", "flare-up", "flareup"
+#Noet: arthritis is removed from the teh 
+  
+  
 pain_lexicon_custom <- tibble(word = custom_pain_keywords) |>
   mutate(
     word = str_squish(tolower(word)),
