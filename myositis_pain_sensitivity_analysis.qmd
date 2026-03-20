@@ -693,6 +693,13 @@ body_part_counts |>
        Percentages indicate proportion of all body-region mentions."
     )
   )
+
+library(writexl)
+
+body_part_counts |>
+  slice_max(order_by = n, n = 20) |>
+  write_xlsx(file.path(DATA_PATH, "data/top20_body_regions_sensitivity.xlsx"))
+
 ```
 
 ```{r}
@@ -1009,13 +1016,15 @@ community_summary <- tibble(
     non_pain_terms = sum(!is_pain, na.rm = TRUE),
     pain_share = round(mean(is_pain, na.rm = TRUE), 2),
     mean_df = round(mean(df, na.rm = TRUE), 1),
-    top_terms = paste(term[order(df, decreasing = TRUE)][1:min(7, n())],
+    top_terms = paste(term[order(df, decreasing = TRUE)][1:min(20, n())],
                       collapse = ", "),
     .groups = "drop"
   ) |>
   arrange(desc(n_terms))
 
 print(community_summary)
+
+writexl::write_xlsx(community_summary, file.path(DATA_PATH, "data/community_summary_sensitivity.xlsx"))
 ```
 
 ```{r}
