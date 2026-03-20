@@ -146,6 +146,13 @@ secrets.R
 config.R
 
 # ====================
+# EXCLUDED SCRIPTS (kept locally, not on GitHub)
+# ====================
+interrated_agreement.R
+manual_coding_myositis_pain.R
+myositis_pain_GPT5_mini-with_evaluation_corrected.R
+
+# ====================
 # NOTES:
 # ====================
 # This .gitignore will:

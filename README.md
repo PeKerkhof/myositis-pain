@@ -208,6 +208,25 @@ Classifies posts to identify those where the author refers to their **own** myos
 
 ---
 
+## 7. Sensitivity analysis
+
+- Script:
+  `myositis_pain_sensitivity_analysis.qmd`
+- Description:
+  Repeats the main analysis pipeline (Section 6) with a reduced pain lexicon to test robustness of findings. Specifically, "arthritis" is removed from the published lexicon and inflammation-related terms ("inflammation", "inflamed", "flare", "flares", "flare-up", "flareup") are removed from the custom lexicon. The analysis otherwise mirrors the main pipeline:
+  - Section 1: Setup and data loading
+  - Section 2: Descriptive statistics over time
+  - Section 3: Pain lexicon preparation (reduced lexicon)
+  - Section 4: Pain mentions analysis
+  - Section 5: Pain description analysis (bigrams)
+  - Section 6: Body regions in pain posts
+  - Section 7: Pain centrality score calculation
+  - Section 8: Semantic network analysis (Jaccard co-occurrence)
+  - Section 9: Network centrality analysis
+  - Section 10: Community detection (Louvain algorithm)
+
+---
+
 ## Citation
 
 If you use this code or methodology in your research, please cite:
