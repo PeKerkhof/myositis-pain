@@ -18,7 +18,10 @@
       "WebFetch(domain:link.springer.com)",
       "Bash(git log:*)",
       "Bash(python3 -c \"import openpyxl; wb = openpyxl.load_workbook\\(''/Users/peterkerkhof/Library/CloudStorage/OneDrive-VrijeUniversiteitAmsterdam/Onderzoek/R/reddit/reddit-data-hub/projects/myositis-pain-data/LLM Output/manual_coding_myositis_pain_MR.xlsx''\\); print\\(''Sheet names:'', wb.sheetnames\\); ws = wb.active; print\\(''Columns:'', [cell.value for cell in ws[1]]\\)\")",
-      "Bash(R --quiet --no-save -e \"df <- arrow::read_feather\\(''myositis_submissions_2005_july2025_clean.feather''\\); cat\\(''Feather columns:'', names\\(df\\), ''\\\\n''\\); cat\\(''Dimensions:'', nrow\\(df\\), ''x'', ncol\\(df\\), ''\\\\n''\\); cat\\(''First few rows of key cols:\\\\n''\\); print\\(head\\(df[,c\\(''id'', ''subreddit'', ''created_utc'', ''author'', ''title''\\)]\\)\\)\")"
+      "Bash(R --quiet --no-save -e \"df <- arrow::read_feather\\(''myositis_submissions_2005_july2025_clean.feather''\\); cat\\(''Feather columns:'', names\\(df\\), ''\\\\n''\\); cat\\(''Dimensions:'', nrow\\(df\\), ''x'', ncol\\(df\\), ''\\\\n''\\); cat\\(''First few rows of key cols:\\\\n''\\); print\\(head\\(df[,c\\(''id'', ''subreddit'', ''created_utc'', ''author'', ''title''\\)]\\)\\)\")",
+      "Bash(git rm:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
