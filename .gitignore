@@ -163,3 +163,4 @@ myositis_pain_GPT5_mini-with_evaluation_corrected.R
 # 
 # To include specific files that would otherwise be ignored, use:
 # !path/to/specific/file.csv
+.positai
