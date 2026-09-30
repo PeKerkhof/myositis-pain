@@ -90,7 +90,7 @@ cut_off_date <- 1754006400 - 7200  # Adjusted for timezone
 # Query searched for: myopath*, myositis, synthetase syndrome, anti-jo-1
 # Excluded: cardiomyopathy
 df_query <- read_feather(
-  file.path(REDDIT_DATA_PATH, "queries/query-output/myositis_submissions20250910.feather")
+  file.path(REDDIT_DATA_PATH, "query-output/myositis_submissions20250910.feather")
 ) |>
   mutate(across(everything(), as.character)) |>
   mutate(source = "parquet") |>
@@ -393,8 +393,8 @@ message(sprintf("Saved %s rows to: %s", scales::comma(nrow(df)), output_path))
 
 ## Output Summary
 
--   **Total posts**: `r scales::comma(nrow(df))`
--   **From Pushshift query**: `r scales::comma(nrow(df_query))`
--   **From subreddit archives**: `r scales::comma(n_posts_subreddits)`
--   **Date range**: `r min(df$date)` to `r max(df$date)`
--   **Output file**: `DATA_PATH/data/myositis_submissions_incl_subreddits_2005_july2025.feather`
+- **Total posts**: `r scales::comma(nrow(df))`
+- **From Pushshift query**: `r scales::comma(nrow(df_query))`
+- **From subreddit archives**: `r scales::comma(n_posts_subreddits)`
+- **Date range**: `r min(df$date)` to `r max(df$date)`
+- **Output file**: `DATA_PATH/data/myositis_submissions_incl_subreddits_2005_july2025.feather`
